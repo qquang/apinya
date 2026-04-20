@@ -778,6 +778,26 @@ $('urlSaveBtn').addEventListener('click', () => {
   });
 });
 
+// Theme
+(function initTheme() {
+  chrome.storage.local.get('theme', (d) => {
+    const t = d.theme || 'pink';
+    document.body.dataset.theme = t;
+    document.querySelectorAll('.theme-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.t === t);
+    });
+  });
+})();
+
+document.querySelectorAll('.theme-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const t = btn.dataset.t;
+    document.body.dataset.theme = t;
+    chrome.storage.local.set({ theme: t });
+    document.querySelectorAll('.theme-btn').forEach(b => b.classList.toggle('active', b === btn));
+  });
+});
+
 // Load on popup open — restore cached scan if available
 loadSettings();
 
