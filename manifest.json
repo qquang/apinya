@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "apinya",
+  "version": "1.0.0",
+  "description": "API endpoint recon tool — crawl & collect all endpoints from any page",
+  "icons": {
+    "16": "images.jpeg",
+    "48": "images.jpeg",
+    "128": "images.jpeg"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "images.jpeg",
+    "default_title": "apinya"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "webRequest",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

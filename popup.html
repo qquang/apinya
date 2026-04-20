@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>apinya</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="header">
+    <img src="images.jpeg" id="icon" alt="apinya">
+    <div id="title-block">
+      <span id="title">apinya</span>
+      <span id="subtitle">API endpoint recon</span>
+    </div>
+  </div>
+
+  <!-- ── Main list view ── -->
+  <div id="mainView">
+    <div id="controls">
+      <button id="listBtn">LIST</button>
+      <button id="clearBtn" title="Clear results">✕</button>
+    </div>
+
+    <div id="status" class="hidden"></div>
+
+    <div id="tabs" class="hidden">
+      <button class="tab active" data-tab="all">ALL <span id="cnt-all" class="badge">0</span></button>
+      <button class="tab" data-tab="network">NET <span id="cnt-network" class="badge">0</span></button>
+      <button class="tab" data-tab="dynamic">DYN <span id="cnt-dynamic" class="badge">0</span></button>
+      <button class="tab" data-tab="static">SRC <span id="cnt-static" class="badge">0</span></button>
+    </div>
+
+    <div id="toolbar" class="hidden">
+      <button id="hostBtn" class="host-btn active" title="Show only main domain & subdomains">HOST</button>
+      <input id="filterInput" type="text" placeholder="filter...">
+      <button id="copyAllBtn" title="Copy all to clipboard">COPY</button>
+    </div>
+
+    <div id="results" class="hidden">
+      <ul id="list"></ul>
+    </div>
+
+    <div id="empty" class="hidden">no endpoints found</div>
+  </div>
+
+  <!-- ── Burp request detail view ── -->
+  <div id="detailView" class="hidden">
+    <div id="detailHeader">
+      <button id="backBtn">← BACK</button>
+      <span id="detailTitle"></span>
+    </div>
+
+    <div id="methodBar">
+      <button class="mBtn" data-m="GET">GET</button>
+      <button class="mBtn" data-m="POST">POST</button>
+      <button class="mBtn" data-m="PUT">PUT</button>
+      <button class="mBtn" data-m="DELETE">DELETE</button>
+      <button class="mBtn" data-m="PATCH">PATCH</button>
+    </div>
+
+    <div id="analysing" class="hidden">analysing js + extracting auth…</div>
+
+    <textarea id="burpTextarea" spellcheck="false" autocomplete="off" placeholder="crafting request..."></textarea>
+
+    <div id="detailActions">
+      <button class="action-btn" id="copyBurpBtn">COPY BURP</button>
+      <button class="action-btn" id="copyCurlBtn">COPY CURL</button>
+    </div>
+
+    <div id="fieldHint" class="hidden"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
