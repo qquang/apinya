@@ -803,9 +803,9 @@ const AI_PRESETS = [
       const s = data.secrets || [];
       if (!s.length) return `Target: ${target}\n\nNo leaked credentials found. Nothing to analyze.`;
       const lines = s.map((x, i) =>
-        `${i + 1}. [${x.type}] ${x.value.slice(0, 40)}${x.value.length > 40 ? '…' : ''}\n   ctx: ${(x.context || '').slice(0, 100)}`
+        `${i + 1}. [${x.type}] value: "${x.value}"\n   context: ${(x.context || '').slice(0, 200)}`
       ).join('\n');
-      return `Target: ${target}\nLeaked credentials (${s.length}):\n${lines}\n\nFor each: rate CRITICAL/HIGH/MEDIUM/LOW/FALSE-POSITIVE and what attacker can do with it. Skip obvious false positives. Be concise.`;
+      return `Target: ${target}\nLeaked credentials (${s.length}):\n${lines}\n\nFor each: rate CRITICAL/HIGH/MEDIUM/LOW/FALSE-POSITIVE and what attacker can do with it. Use the context to understand what each credential is for. Skip obvious false positives. Be concise.`;
     },
   },
   {
@@ -886,9 +886,10 @@ const AI_PRESETS = [
       const userText = ($('customPromptInput').value || '').trim();
       if (!userText) return null;
       const eps = (data.all || []).slice(0, 30).map(e => fmtEp(e, currentRootDomain)).join('\n') || 'none';
-      const sec = (data.secrets || []).slice(0, 6)
-        .map(s => `- [${s.type}] ${s.value.slice(0, 25)}`).join('\n') || 'none';
-      return `${userText}\n\n---\nScan data — ${target}:\nEndpoints (${(data.all||[]).length}):\n${eps}\nLeaks:\n${sec}`;
+      const sec = (data.secrets || [])
+        .map(s => `- [${s.type}] value: "${s.value}" | context: ${(s.context || '').slice(0, 150)}`)
+        .join('\n') || 'none';
+      return `${userText}\n\n---\nScan data — ${target}:\nEndpoints (${(data.all||[]).length} total, showing 30):\n${eps}\n\nLeaked credentials (${(data.secrets||[]).length}):\n${sec}`;
     },
   },
 ];
