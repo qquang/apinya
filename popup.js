@@ -775,6 +775,43 @@ loadSettings();
 
 // ── AI analysis view ──────────────────────────────────────────
 
+// Rough token estimator (~4 chars per token)
+function roughTokens(s) { return Math.ceil((s || '').length / 4); }
+
+// Build data block that fits within a token budget.
+// Spends half on endpoints, half on secrets; stops adding when budget hit.
+function budgetData(data, tokenBudget) {
+  const epBudget  = Math.floor(tokenBudget * 0.45);
+  const secBudget = Math.floor(tokenBudget * 0.55);
+
+  const epLines = [];
+  let epUsed = 0;
+  for (const e of (data.all || []).slice(0, 40)) {
+    const line = fmtEp(e, currentRootDomain);
+    const t = roughTokens(line);
+    if (epUsed + t > epBudget) break;
+    epLines.push(line); epUsed += t;
+  }
+
+  const secLines = [];
+  let secUsed = 0;
+  for (const s of (data.secrets || [])) {
+    const line = `- [${s.type}] value: "${s.value}" | ctx: ${(s.context || '').slice(0, 150)}`;
+    const t = roughTokens(line);
+    if (secUsed + t > secBudget) break;
+    secLines.push(line); secUsed += t;
+  }
+
+  return {
+    eps:      epLines.join('\n')  || 'none',
+    sec:      secLines.join('\n') || 'none',
+    epShown:  epLines.length,
+    epTotal:  (data.all     || []).length,
+    secShown: secLines.length,
+    secTotal: (data.secrets || []).length,
+  };
+}
+
 // Helper: shorten URL to path (save tokens)
 function epToPath(url, rootDomain) {
   try {
@@ -800,12 +837,12 @@ const AI_PRESETS = [
     id: 'leaks',
     label: 'Leak severity — which are actually dangerous?',
     build(data, target) {
-      const s = data.secrets || [];
-      if (!s.length) return `Target: ${target}\n\nNo leaked credentials found. Nothing to analyze.`;
-      const lines = s.map((x, i) =>
-        `${i + 1}. [${x.type}] value: "${x.value}"\n   context: ${(x.context || '').slice(0, 200)}`
-      ).join('\n');
-      return `Target: ${target}\nLeaked credentials (${s.length}):\n${lines}\n\nFor each: rate CRITICAL/HIGH/MEDIUM/LOW/FALSE-POSITIVE and what attacker can do with it. Use the context to understand what each credential is for. Skip obvious false positives. Be concise.`;
+      const all = data.secrets || [];
+      if (!all.length) return `Target: ${target}\n\nNo leaked credentials found.`;
+      // Budget: 3500 tokens for data (response max_tokens=1024, prompt overhead ~500)
+      const { sec, secShown, secTotal } = budgetData({ all: [], secrets: all }, 3500);
+      const suffix = secShown < secTotal ? ` (showing ${secShown}/${secTotal} due to size)` : '';
+      return `Target: ${target}\nLeaked credentials${suffix}:\n${sec}\n\nFor each: rate CRITICAL/HIGH/MEDIUM/LOW/FALSE-POSITIVE and what attacker can do. Use the context to understand what each credential is for. Skip false positives. Be concise.`;
     },
   },
   {
@@ -885,11 +922,13 @@ const AI_PRESETS = [
     build(data, target) {
       const userText = ($('customPromptInput').value || '').trim();
       if (!userText) return null;
-      const eps = (data.all || []).slice(0, 30).map(e => fmtEp(e, currentRootDomain)).join('\n') || 'none';
-      const sec = (data.secrets || [])
-        .map(s => `- [${s.type}] value: "${s.value}" | context: ${(s.context || '').slice(0, 150)}`)
-        .join('\n') || 'none';
-      return `${userText}\n\n---\nScan data — ${target}:\nEndpoints (${(data.all||[]).length} total, showing 30):\n${eps}\n\nLeaked credentials (${(data.secrets||[]).length}):\n${sec}`;
+      // Reserve ~600 tokens for user prompt + headers; 3400 for data
+      const userTokens = roughTokens(userText);
+      const { eps, sec, epShown, epTotal, secShown, secTotal } =
+        budgetData(data, Math.max(1000, 4000 - userTokens));
+      const epNote  = epShown  < epTotal  ? ` (${epShown}/${epTotal})` : ` (${epTotal})`;
+      const secNote = secShown < secTotal ? ` (${secShown}/${secTotal})` : ` (${secTotal})`;
+      return `${userText}\n\n---\nScan data — ${target}:\nEndpoints${epNote}:\n${eps}\n\nLeaked credentials${secNote}:\n${sec}`;
     },
   },
 ];
