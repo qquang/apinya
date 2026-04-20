@@ -308,6 +308,22 @@ body {
 #aiRunBtn:hover { background: #2a0a2a; color: #e0a0ff; }
 #aiRunBtn:disabled { opacity: 0.3; cursor: not-allowed; }
 
+#customPromptInput {
+  width: 100%;
+  min-height: 90px;
+  background: #080508;
+  border: none;
+  border-bottom: 1px solid #3d1030;
+  color: #e8d0f0;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px 12px;
+  outline: none;
+  resize: vertical;
+}
+#customPromptInput::placeholder { color: #4a1a30; }
+
 #aiLoading {
   padding: 12px;
   font-size: 10px;

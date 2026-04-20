@@ -879,6 +879,18 @@ const AI_PRESETS = [
       return `Target: ${target}\nEndpoints (${all.length} total, showing 40):\n${eps}\nLeaks:\n${sec}\n\nBug bounty summary: top 3 priority endpoints, quick wins, credential risk. Max 250 words. Be specific.`;
     },
   },
+  {
+    id: 'custom',
+    label: '✏  Custom prompt',
+    build(data, target) {
+      const userText = ($('customPromptInput').value || '').trim();
+      if (!userText) return null;
+      const eps = (data.all || []).slice(0, 30).map(e => fmtEp(e, currentRootDomain)).join('\n') || 'none';
+      const sec = (data.secrets || []).slice(0, 6)
+        .map(s => `- [${s.type}] ${s.value.slice(0, 25)}`).join('\n') || 'none';
+      return `${userText}\n\n---\nScan data — ${target}:\nEndpoints (${(data.all||[]).length}):\n${eps}\nLeaks:\n${sec}`;
+    },
+  },
 ];
 
 // Build preset <select> options
@@ -890,6 +902,10 @@ const AI_PRESETS = [
     sel.appendChild(o);
   });
 })();
+
+$('presetSelect').addEventListener('change', (e) => {
+  $('customPromptInput').classList.toggle('hidden', e.target.value !== 'custom');
+});
 
 function renderMarkdown(text) {
   let html = escHtml(text);
@@ -917,6 +933,10 @@ function runAiPreset() {
   const preset = AI_PRESETS.find(p => p.id === presetId) || AI_PRESETS[0];
   const target = currentRootDomain || currentTabHostname || 'unknown';
   const prompt = preset.build(allData, target);
+  if (!prompt) {
+    $('aiResult').innerHTML = '<span style="color:#ff5577">type your prompt first</span>';
+    return;
+  }
 
   $('aiLoading').classList.remove('hidden');
   $('aiResult').innerHTML = '';
