@@ -28,12 +28,14 @@
       <button class="tab" data-tab="network">NET <span id="cnt-network" class="badge">0</span></button>
       <button class="tab" data-tab="dynamic">DYN <span id="cnt-dynamic" class="badge">0</span></button>
       <button class="tab" data-tab="static">SRC <span id="cnt-static" class="badge">0</span></button>
+      <button class="tab" data-tab="secrets">LEAK <span id="cnt-secrets" class="badge">0</span></button>
     </div>
 
     <div id="toolbar" class="hidden">
       <button id="hostBtn" class="host-btn active" title="Show only main domain & subdomains">HOST</button>
       <input id="filterInput" type="text" placeholder="filter...">
       <button id="copyAllBtn" title="Copy all to clipboard">COPY</button>
+      <button id="exportJsonBtn" title="Export as JSON file">JSON</button>
     </div>
 
     <div id="results" class="hidden">
@@ -41,6 +43,11 @@
     </div>
 
     <div id="empty" class="hidden">no endpoints found</div>
+
+    <div id="secretsPanel" class="hidden">
+      <ul id="secretsList"></ul>
+      <div id="secretsEmpty" class="hidden">no secrets/credentials found in JS</div>
+    </div>
   </div>
 
   <!-- ── Burp request detail view ── -->

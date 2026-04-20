@@ -65,12 +65,32 @@ XMLHttpRequest.prototype.send = function (body) {
   return _origSend.apply(this, arguments);
 };
 
-// WebSocket
+// WebSocket — capture URL + first 20 messages in each direction
 const _OrigWS = window.WebSocket;
 if (_OrigWS) {
   window.WebSocket = function (url, ...args) {
-    try { if (!_intercepted.has(String(url))) _intercepted.set(String(url), { method: 'WS', body: null, headers: {} }); } catch (_) {}
-    return new _OrigWS(url, ...args);
+    const wsUrl = String(url);
+    const ws = new _OrigWS(url, ...args);
+    try {
+      if (!_intercepted.has(wsUrl))
+        _intercepted.set(wsUrl, { method: 'WS', body: null, headers: {}, wsMessages: [] });
+      const entry = _intercepted.get(wsUrl);
+      const origSend = ws.send.bind(ws);
+      ws.send = function (data) {
+        try {
+          if (entry.wsMessages.length < 20)
+            entry.wsMessages.push({ dir: 'out', data: typeof data === 'string' ? data.slice(0, 300) : '[binary]' });
+        } catch (_) {}
+        return origSend(data);
+      };
+      ws.addEventListener('message', (evt) => {
+        try {
+          if (entry.wsMessages.length < 20)
+            entry.wsMessages.push({ dir: 'in', data: typeof evt.data === 'string' ? evt.data.slice(0, 300) : '[binary]' });
+        } catch (_) {}
+      });
+    } catch (_) {}
+    return ws;
   };
   Object.assign(window.WebSocket, _OrigWS);
 }
@@ -82,11 +102,15 @@ let _urlToVars     = new Map(); // url -> Set<varName>
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const SKIP_EXTS = /\.(js|css|html?|png|jpe?g|gif|ico|svg|woff2?|ttf|eot|map|txt|pdf|zip|webp|avif)(\?.*)?$/i;
 
+// Single-segment paths that are commonly high-value targets
+const IMPORTANT_PATHS = /^\/(?:login|logout|signin|signup|register|token|refresh|auth|oauth2?|authorize|callback|me|profile|whoami|health|status|ping|graphql|gql|introspect|reset|verify|confirm|session|admin|dashboard|api|upload|download)(?:[/?#].*)?$/i;
+
 function looksLikeEndpoint(url) {
   if (!url || url.length < 4) return false;
   if (url === '/' || url === '//') return false;
   if (SKIP_EXTS.test(url)) return false;
   if (url.startsWith('/')) {
+    if (IMPORTANT_PATHS.test(url)) return true;
     const segs = url.replace(/[?#].*/, '').split('/').filter(Boolean);
     if (segs.length < 2) return false;
   }
@@ -199,6 +223,122 @@ function extractFromCode(code) {
   merge(endpointsFromConstants(code, consts));
   merge(extractDirectPatterns(code));
   return result;
+}
+
+// ── Source map fetching ───────────────────────────────────────────────────────
+// Many prod bundles embed //# sourceMappingURL= pointing to original source.
+async function tryFetchSourceMap(scriptUrl, code) {
+  const match = code.match(/\/\/[#@]\s*sourceMappingURL=(\S+)\s*$/m);
+  if (!match) return null;
+  const ref = match[1].trim();
+  try {
+    if (ref.startsWith('data:application/json')) {
+      const b64 = ref.split('base64,')[1];
+      if (b64) return JSON.parse(atob(b64));
+      return null;
+    }
+    const mapUrl = new URL(ref, scriptUrl).href;
+    const res = await fetch(mapUrl, { cache: 'force-cache' });
+    if (res.ok) return await res.json();
+  } catch (_) {}
+  return null;
+}
+
+// ── Secrets / credential detection ───────────────────────────────────────────
+// ── Secret / credential detection patterns ───────────────────────────────────
+// Strategy: two layers
+//   1. Format-specific patterns (very high confidence, e.g. AKIA…, AIza…)
+//   2. Property-name-based patterns: match ANY site's credential fields by name,
+//      regardless of value format — covers accessKey, secretKey, S3_SECRET_KEY, etc.
+//
+// Values use [^"'`\r\n]{N,} to allow special chars (#!@$) and short values.
+
+const _SECRET_PATTERNS = [
+
+  // ── Layer 1: format-specific ──────────────────────────────────────────────
+  { name: 'AWS AccessKeyId',        re: /\b(AKIA[0-9A-Z]{16})\b/g },
+  { name: 'Google/Firebase Key',    re: /["'`](AIza[A-Za-z0-9_-]{30,50})["'`]/g },
+  { name: 'Firebase measurementId', re: /["'`](G-[A-Z0-9]{8,14})["'`]/g },
+  { name: 'Firebase apiKey prop',   re: /\bapiKey\s*[:=]\s*["'`]([A-Za-z0-9_-]{15,})["'`]/gi },
+  { name: 'Stripe Live SK',         re: /\b(sk_live_[0-9a-zA-Z]{24,})\b/g },
+  { name: 'Stripe Live PK',         re: /\b(pk_live_[0-9a-zA-Z]{24,})\b/g },
+  { name: 'GitHub Token',           re: /\b(gh[pousr]_[0-9A-Za-z]{36,}|github_pat_[0-9A-Za-z_]{20,})\b/g },
+  { name: 'Slack Token',            re: /\b(xox[baprs]-[0-9]{10,}-[0-9A-Za-z-]{20,})\b/g },
+  { name: 'Firebase FCM',           re: /\b(AAAA[A-Za-z0-9_-]{7}:[A-Za-z0-9_-]{100,})\b/g },
+  { name: 'Private Key header',     re: /(-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)/g },
+  { name: 'Twilio SID',             re: /\b(SK[0-9a-fA-F]{32})\b/g },
+  { name: 'Hardcoded JWT',          re: /["'`](eyJ[A-Za-z0-9_-]{15,}\.eyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,})["'`]/g },
+
+  // ── Layer 2a: SPA env vars (REACT_APP_*, VITE_*, NEXT_PUBLIC_*) ───────────
+  // [A-Z0-9_]* allows digits so S3_SECRET_KEY, GRPC_V2_TOKEN, etc. all match.
+  // Value: [^"'`\r\n]{4,} — any non-quote char, min 4, allows # ! @ $ etc.
+  { name: 'SPA env credential',
+    re: /\b(?:REACT_APP|VITE|NEXT_PUBLIC)_[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PWD|CREDENTIAL|CERT)[A-Z0-9_]*\s*["'`:\s,=]+["'`]([^"'`\r\n]{4,})["'`]/g },
+
+  // Internal service URLs baked into the bundle — useful for infra recon
+  { name: 'Internal service URL',
+    re: /\b(?:REACT_APP|VITE|NEXT_PUBLIC)_[A-Z0-9_]*(?:URL|HOST|ENDPOINT|BASE)[A-Z0-9_]*\s*["'`:\s,=]+["'`](https?:\/\/[^"'`\s\r\n]{8,})["'`]/g },
+
+  // ── Layer 2b: property-name-based — covers any framework, any site ─────────
+  // Explicit alternation of sensitive property names in camelCase + snake_case.
+  // Non-capturing groups throughout so m[1] is always the value.
+  // [_-] at END of char class = literal hyphen, not a range.
+
+  { name: 'Access / Secret key prop',
+    re: /["'`]?(?:access[_-]?key|secret[_-]?key|accessKey|secretKey)["'`]?\s*[:=]\s*["'`]([^"'`\r\n]{4,200})["'`]/gi },
+
+  { name: 'API key / secret prop',
+    re: /["'`]?(?:api[_-]?key|api[_-]?secret|apiKey|apiSecret|app[_-]?key|app[_-]?secret|appKey|appSecret)["'`]?\s*[:=]\s*["'`]([^"'`\r\n]{4,200})["'`]/gi },
+
+  { name: 'Auth / token prop',
+    re: /["'`]?(?:auth[_-]?token|auth[_-]?key|auth[_-]?secret|authToken|authKey|authSecret|client[_-]?secret|clientSecret|bearer[_-]?token|bearerToken|refresh[_-]?token|refreshToken)["'`]?\s*[:=]\s*["'`]([^"'`\r\n]{4,200})["'`]/gi },
+
+  { name: 'Private / signing key prop',
+    re: /["'`]?(?:private[_-]?key|signing[_-]?key|encryption[_-]?key|hmac[_-]?(?:key|secret)|master[_-]?(?:key|secret)|webhook[_-]?(?:key|secret|token)|privateKey|signingKey|encryptionKey|masterKey)["'`]?\s*[:=]\s*["'`]([^"'`\r\n]{4,200})["'`]/gi },
+
+  { name: 'Password / passwd prop',
+    re: /["'`]?(?:password|passwd|passphrase|pwd)["'`]?\s*[:=]\s*["'`]([^"'`\r\n]{4,200})["'`]/gi },
+
+  { name: 'DB / storage credential',
+    re: /["'`]?(?:(?:db|database|mongo|redis|mysql|postgres|pg)[_-]?(?:pass(?:word)?|secret|url)|s3[_-]?(?:access[_-]?key|secret[_-]?key|key|secret)|smtp[_-]?(?:pass(?:word)?|secret)|ftp[_-]?(?:pass(?:word)?|secret))["'`]?\s*[:=]\s*["'`]([^"'`\r\n]{4,200})["'`]/gi },
+
+  { name: 'MQTT credential',
+    re: /["'`]?mqtt[_-]?(?:user(?:name)?|pass(?:word)?|token)["'`]?\s*[:=]\s*["'`]([^"'`\r\n]{4,200})["'`]/gi },
+];
+
+// Filter obvious placeholder / test values.
+// \b prevents "latest" matching "test", "replacement" matching "replace", etc.
+const _PLACEHOLDER = /\byour[\s_-]|\breplace\b|\bexample\b|\bplaceholder\b|x{4,}|\btest\b|\bdemo\b|\bsample\b|\bchangeme\b|^<|^>|^\d+$|^#[0-9a-fA-F]{3,8}$/i;
+
+function detectSecrets(codes) {
+  const findings = [];
+  const seen = new Set();
+  for (const code of codes) {
+    for (const { name, re } of _SECRET_PATTERNS) {
+      const r = new RegExp(re.source, re.flags);
+      let m;
+      while ((m = r.exec(code)) !== null) {
+        const value = (m[1] || m[0]).slice(0, 120);
+        if (_PLACEHOLDER.test(value)) continue;
+        const key = `${name}:${value}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        // Short preview (single line)
+        const ctx = code.slice(Math.max(0, m.index - 60), Math.min(code.length, m.index + 80))
+          .replace(/\s+/g, ' ').trim();
+        // Full context for expand view: add newlines at JS delimiters so minified
+        // code becomes somewhat readable. Cap at ~800 chars total.
+        const raw = code.slice(Math.max(0, m.index - 250), Math.min(code.length, m.index + 550));
+        const fullContext = raw
+          .replace(/([,;{}])\s*/g, '$1\n')
+          .replace(/\n{2,}/g, '\n')
+          .trim()
+          .slice(0, 800);
+        findings.push({ type: name, value, context: ctx, fullContext });
+      }
+    }
+  }
+  return findings;
 }
 
 // ── Body schema extraction ────────────────────────────────────────────────────
@@ -353,6 +493,7 @@ async function runStaticScan() {
   const resultMap = new Map();
   const scriptEls = [...document.querySelectorAll('script')];
   const contents = [];
+  const sourceMapFiles = [];
 
   for (const el of scriptEls) {
     if (el.textContent) contents.push(el.textContent);
@@ -362,8 +503,29 @@ async function runStaticScan() {
   const fetched = await Promise.allSettled(
     externalUrls.map(u => fetch(u, { cache: 'force-cache' }).then(r => r.text()))
   );
-  for (const r of fetched) {
-    if (r.status === 'fulfilled' && r.value) contents.push(r.value);
+  for (let i = 0; i < fetched.length; i++) {
+    const r = fetched[i];
+    if (r.status !== 'fulfilled' || !r.value) continue;
+    contents.push(r.value);
+    // Try to fetch and parse source map — exposes original unminified source
+    try {
+      const mapData = await tryFetchSourceMap(externalUrls[i], r.value);
+      if (mapData) {
+        if (mapData.sources) {
+          for (const s of mapData.sources) {
+            if (s && !s.includes('node_modules') && !s.startsWith('webpack:///external')) {
+              sourceMapFiles.push(s.replace(/^webpack:\/\/\//, ''));
+            }
+          }
+        }
+        // Original source code is gold — scan it for endpoints
+        if (mapData.sourcesContent) {
+          for (const src of mapData.sourcesContent) {
+            if (src && src.length < 500000) contents.push(src);
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   // Store globally for later CRAFT_REQUEST queries
@@ -391,7 +553,26 @@ async function runStaticScan() {
     });
   });
 
-  return [...resultMap.entries()].map(([url, method]) => ({ url, method }));
+  // robots.txt — Disallowed paths are often the most interesting ones
+  try {
+    const robotsRes = await fetch(window.location.origin + '/robots.txt', { cache: 'force-cache' });
+    if (robotsRes.ok) {
+      for (const line of (await robotsRes.text()).split('\n')) {
+        const m = line.match(/^Disallow:\s*(\S+)/);
+        if (!m || m[1] === '/') continue;
+        const p = m[1].split('*')[0]; // strip wildcard suffix
+        if (p && looksLikeEndpoint(p) && !resultMap.has(p)) resultMap.set(p, 'GET');
+      }
+    }
+  } catch (_) {}
+
+  const secrets = detectSecrets(contents);
+
+  return {
+    endpoints: [...resultMap.entries()].map(([url, method]) => ({ url, method })),
+    secrets,
+    sourceMapFiles,
+  };
 }
 
 function getPerformanceUrls() {
@@ -403,11 +584,16 @@ function getPerformanceUrls() {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'SCAN') {
-    runStaticScan().then(staticItems => {
+    runStaticScan().then(({ endpoints, secrets, sourceMapFiles }) => {
       sendResponse({
-        static: staticItems,
-        dynamic: [..._intercepted.entries()].map(([url, d]) => ({ url, method: d.method })),
+        static: endpoints,
+        dynamic: [..._intercepted.entries()].map(([url, d]) => ({
+          url, method: d.method,
+          wsMessages: d.wsMessages?.length ? d.wsMessages : undefined,
+        })),
         performance: getPerformanceUrls(),
+        secrets,
+        sourceMapFiles,
       });
     });
     return true;

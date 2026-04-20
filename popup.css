@@ -466,3 +466,175 @@ body {
   line-height: 1.5;
 }
 
+/* ── Status code badges ─────────────────────────────────────── */
+
+.status-badge {
+  flex-shrink: 0;
+  font-size: 8px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-weight: bold;
+  min-width: 28px;
+  text-align: center;
+}
+
+.s-2xx { background: #0a2010; color: #50fa7b; border: 1px solid #1a5020; }
+.s-3xx { background: #081a2a; color: #8be9fd; border: 1px solid #1a4060; }
+.s-4xx { background: #2a1500; color: #ffb86c; border: 1px solid #6a3a00; }
+.s-5xx { background: #2a0608; color: #ff5555; border: 1px solid #660020; }
+
+/* ── LEAK / secrets tab ─────────────────────────────────────── */
+
+.tab[data-tab="secrets"].active { color: #ff5555; border-bottom-color: #ff5555; }
+.tab[data-tab="secrets"].active .badge { background: #ff5555; color: #130a10; }
+
+#secretsPanel {
+  max-height: 380px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #5a1a35 #130a10;
+}
+#secretsPanel::-webkit-scrollbar { width: 5px; }
+#secretsPanel::-webkit-scrollbar-track { background: #130a10; }
+#secretsPanel::-webkit-scrollbar-thumb { background: #5a1a35; }
+
+#secretsList {
+  list-style: none;
+  padding: 0;
+}
+
+/* Each secret card */
+.secret-item {
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid #2a0a1a;
+  border-left: 2px solid transparent;
+  transition: border-color 0.1s, background 0.1s;
+}
+.secret-item:hover { background: #170810; border-left-color: #ff5555; }
+
+.secret-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.secret-type {
+  flex: 1;
+  font-size: 9px;
+  color: #ff5555;
+  font-weight: bold;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* The credential value — most important thing on the card */
+.secret-value {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: #ffb86c;
+  background: #1a0810;
+  border: 1px solid #3a1020;
+  border-radius: 2px;
+  padding: 3px 6px;
+  margin-bottom: 5px;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+/* Preview row: short context + expand toggle */
+.secret-ctx-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.secret-ctx-text {
+  flex: 1;
+  font-size: 9px;
+  color: #9a7090;        /* was #5a3050 — much more readable */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.secret-toggle {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: #5a2540;
+  transition: color 0.1s;
+}
+.secret-item:hover .secret-toggle,
+.secret-item.secret-expanded .secret-toggle { color: #c084fc; }
+
+/* Expanded context block — shown when item is clicked */
+.secret-ctx-expand {
+  display: none;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: #070308;
+  border: 1px solid #3d1030;
+  border-radius: 2px;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  color: #c0a0b8;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.7;
+  max-height: 200px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #5a1a35 #070308;
+}
+.secret-ctx-expand::-webkit-scrollbar { width: 4px; }
+.secret-ctx-expand::-webkit-scrollbar-thumb { background: #5a1a35; }
+
+/* Highlighted credential value inside the expanded context */
+.secret-ctx-expand mark {
+  background: #4a1500;
+  color: #ffb86c;
+  border-radius: 1px;
+  padding: 0 1px;
+}
+
+.secret-item.secret-expanded .secret-ctx-expand { display: block; }
+
+.copy-secret-btn {
+  flex-shrink: 0;
+  font-size: 9px;
+  padding: 1px 6px;
+  background: #1a0a14;
+  border: 1px solid #5a1a35;
+  color: #a05080;
+  cursor: pointer;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.5px;
+  transition: border-color 0.1s, color 0.1s;
+}
+.copy-secret-btn:hover { border-color: #ff5555; color: #ff5555; }
+
+#secretsEmpty {
+  padding: 24px 12px;
+  text-align: center;
+  color: #4a1a30;
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
+/* ── JSON export button ─────────────────────────────────────── */
+
+#exportJsonBtn {
+  padding: 4px 8px;
+  background: #1a0a14;
+  border: 1px solid #5a2040;
+  color: #a05080;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+}
+#exportJsonBtn:hover { border-color: #c084fc; color: #c084fc; }
+

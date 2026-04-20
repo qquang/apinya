@@ -1,4 +1,4 @@
-let allData = { all: [], network: [], dynamic: [], static: [] };
+let allData = { all: [], network: [], dynamic: [], static: [], secrets: [], sourceMapFiles: [] };
 let currentTab = 'all';
 let hostOnly = true;
 let currentRootDomain = '';
@@ -48,6 +48,12 @@ function applyHostFilter(items) {
   return items.filter(i => isTargetDomain(i.url, currentRootDomain));
 }
 
+function statusBadge(status) {
+  if (!status) return '';
+  const cls = status >= 500 ? 's-5xx' : status >= 400 ? 's-4xx' : status >= 300 ? 's-3xx' : 's-2xx';
+  return `<span class="status-badge ${cls}">${status}</span>`;
+}
+
 const $ = id => document.getElementById(id);
 
 // DOM refs
@@ -60,8 +66,9 @@ const resultsEl   = $('results');
 const listEl      = $('list');
 const emptyEl     = $('empty');
 const filterInput = $('filterInput');
-const copyAllBtn  = $('copyAllBtn');
-const hostBtn     = $('hostBtn');
+const copyAllBtn    = $('copyAllBtn');
+const exportJsonBtn = $('exportJsonBtn');
+const hostBtn       = $('hostBtn');
 const mainView    = $('mainView');
 const detailView  = $('detailView');
 const backBtn     = $('backBtn');
@@ -84,6 +91,7 @@ function updateCounts() {
   $('cnt-network').textContent = applyHostFilter(allData.network).length;
   $('cnt-dynamic').textContent = applyHostFilter(allData.dynamic).length;
   $('cnt-static').textContent  = applyHostFilter(allData.static).length;
+  $('cnt-secrets').textContent = (allData.secrets || []).length;
 }
 
 function methodClass(method) {
@@ -120,6 +128,7 @@ function render(items) {
     <li data-item="${escHtml(JSON.stringify(item))}" title="${escHtml(item.url)}">
       <span class="method-badge ${methodClass(item.method)}">${escHtml(item.method || '?')}</span>
       <span class="src-badge ${srcClass(item.src)}">${srcLabel(item.src)}</span>
+      ${statusBadge(item.status)}
       <span class="url-text">${fmtUrl(item.url)}</span>
       <span class="copy-hint">burp</span>
     </li>
@@ -152,7 +161,73 @@ function showTab(tab) {
   document.querySelectorAll('.tab').forEach(t => {
     t.classList.toggle('active', t.dataset.tab === tab);
   });
-  render(allData[tab] || []);
+  const secretsPanel = $('secretsPanel');
+  if (tab === 'secrets') {
+    resultsEl.classList.add('hidden');
+    emptyEl.classList.add('hidden');
+    secretsPanel.classList.remove('hidden');
+    renderSecrets();
+  } else {
+    secretsPanel.classList.add('hidden');
+    render(allData[tab] || []);
+  }
+}
+
+function renderSecrets() {
+  const secretsList = $('secretsList');
+  const secretsEmpty = $('secretsEmpty');
+  const secrets = allData.secrets || [];
+  if (secrets.length === 0) {
+    secretsList.innerHTML = '';
+    secretsEmpty.classList.remove('hidden');
+    return;
+  }
+  secretsEmpty.classList.add('hidden');
+
+  secretsList.innerHTML = secrets.map((s, i) => {
+    // Highlight the credential value inside the expanded context
+    const fullCtx = s.fullContext || s.context || '';
+    const escapedCtx = escHtml(fullCtx);
+    const escapedVal = escHtml(s.value);
+    const highlightedCtx = escapedCtx.split(escapedVal).join(
+      `<mark>${escapedVal}</mark>`
+    );
+    return `
+    <li class="secret-item" data-idx="${i}">
+      <div class="secret-header">
+        <span class="secret-type">${escHtml(s.type)}</span>
+        <button class="copy-secret-btn">COPY</button>
+      </div>
+      <div class="secret-value">${escHtml(s.value)}</div>
+      <div class="secret-ctx-preview">
+        <span class="secret-ctx-text">${escHtml((s.context || '').slice(0, 100))}</span>
+        <span class="secret-toggle">▼ context</span>
+      </div>
+      <pre class="secret-ctx-expand">${highlightedCtx}</pre>
+    </li>`;
+  }).join('');
+
+  secretsList.querySelectorAll('.secret-item').forEach(li => {
+    // Toggle expanded context on preview row click
+    li.querySelector('.secret-ctx-preview').addEventListener('click', () => {
+      li.classList.toggle('secret-expanded');
+      const t = li.querySelector('.secret-toggle');
+      if (t) t.textContent = li.classList.contains('secret-expanded') ? '▲ collapse' : '▼ context';
+    });
+
+    // COPY button — stopPropagation so it doesn't trigger the toggle
+    li.querySelector('.copy-secret-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = parseInt(li.dataset.idx);
+      const secret = allData.secrets[idx];
+      if (!secret) return;
+      const btn = e.currentTarget;
+      navigator.clipboard.writeText(secret.value).then(() => {
+        btn.textContent = 'OK!';
+        setTimeout(() => { btn.textContent = 'COPY'; }, 1200);
+      });
+    });
+  });
 }
 
 function dedupeUrls(items) {
@@ -195,7 +270,9 @@ listBtn.addEventListener('click', async () => {
     const networkItems = (bgRes.data || []).map(r => ({
       url: r.url,
       method: (r.method || 'GET').toUpperCase(),
-      src: 'N'
+      src: 'N',
+      status: r.status || null,
+      resHeaders: r.resHeaders || null,
     }));
 
     // 2. Content script: static analysis + dynamic intercepted
@@ -225,10 +302,12 @@ listBtn.addEventListener('click', async () => {
     const allItems = dedupeUrls([...mergedNetwork, ...mergedDynamic, ...mergedStatic]);
 
     allData = {
-      all:     allItems,
-      network: mergedNetwork,
-      dynamic: mergedDynamic,
-      static:  mergedStatic
+      all:            allItems,
+      network:        mergedNetwork,
+      dynamic:        mergedDynamic,
+      static:         mergedStatic,
+      secrets:        contentRes.secrets || [],
+      sourceMapFiles: contentRes.sourceMapFiles || [],
     };
 
     updateCounts();
@@ -238,7 +317,9 @@ listBtn.addEventListener('click', async () => {
 
     const shown = applyHostFilter(allItems).length;
     const domainInfo = (hostOnly && currentRootDomain) ? ` — ${shown} from ${currentRootDomain}` : '';
-    setStatus(`found ${allItems.length} total${domainInfo} — click any for Burp request`);
+    const secretsInfo = contentRes.secrets?.length ? ` · ${contentRes.secrets.length} leak(s)` : '';
+    const mapInfo = contentRes.sourceMapFiles?.length ? ` · ${contentRes.sourceMapFiles.length} src map files` : '';
+    setStatus(`found ${allItems.length} total${domainInfo}${secretsInfo}${mapInfo}`);
   } catch (err) {
     setStatus(`error: ${err.message}`, true);
   } finally {
@@ -248,7 +329,7 @@ listBtn.addEventListener('click', async () => {
 });
 
 clearBtn.addEventListener('click', () => {
-  allData = { all: [], network: [], dynamic: [], static: [] };
+  allData = { all: [], network: [], dynamic: [], static: [], secrets: [], sourceMapFiles: [] };
   updateCounts();
   listEl.innerHTML = '';
   filterInput.value = '';
@@ -256,6 +337,7 @@ clearBtn.addEventListener('click', () => {
   toolbarEl.classList.add('hidden');
   resultsEl.classList.add('hidden');
   emptyEl.classList.add('hidden');
+  $('secretsPanel').classList.add('hidden');
   statusEl.classList.add('hidden');
   statusEl.textContent = '';
 
@@ -279,6 +361,32 @@ copyAllBtn.addEventListener('click', () => {
     copyAllBtn.textContent = 'COPIED!';
     setTimeout(() => { copyAllBtn.textContent = orig; }, 1500);
   });
+});
+
+exportJsonBtn.addEventListener('click', () => {
+  const data = {
+    target: currentRootDomain || currentTabHostname || 'unknown',
+    scanned_at: new Date().toISOString(),
+    endpoints: allData.all.map(e => ({
+      url: e.url,
+      method: e.method,
+      source: e.src,
+      status: e.status || null,
+      response_headers: e.resHeaders || null,
+    })),
+    secrets: allData.secrets || [],
+    source_map_files: allData.sourceMapFiles || [],
+  };
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `apinya-${data.target}-${Date.now()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 });
 
 document.querySelectorAll('.tab').forEach(btn => {
@@ -354,12 +462,21 @@ function renderBurpRequest() {
   burpTextarea.value = buildBurpRequest(item.url, detailMethod, currentTabHostname, auth, bodyFields, capturedBody);
   burpTextarea.disabled = false;
 
-  // Show hint about body source
-  if (capturedBody) {
-    fieldHint.textContent = `body: captured from actual request (${Object.keys(capturedBody).length} fields)`;
-    fieldHint.classList.remove('hidden');
-  } else if (bodyFields.length > 0) {
-    fieldHint.textContent = `body: inferred from JS source — ${bodyFields.join(', ')}`;
+  // Show hint about body source + response headers
+  const hints = [];
+  if (capturedBody) hints.push(`body: captured (${Object.keys(capturedBody).length} fields)`);
+  else if (bodyFields.length > 0) hints.push(`body: inferred — ${bodyFields.join(', ')}`);
+
+  const rh = detailItem?.resHeaders;
+  if (rh) {
+    if (rh['access-control-allow-origin']) hints.push(`CORS: ${rh['access-control-allow-origin']}`);
+    if (rh['server']) hints.push(`server: ${rh['server']}`);
+    if (rh['x-powered-by']) hints.push(`powered-by: ${rh['x-powered-by']}`);
+    if (rh['content-type']) hints.push(`ctype: ${rh['content-type'].split(';')[0]}`);
+  }
+
+  if (hints.length) {
+    fieldHint.textContent = hints.join('  ·  ');
     fieldHint.classList.remove('hidden');
   } else {
     fieldHint.classList.add('hidden');
@@ -378,7 +495,7 @@ function buildBurpRequest(url, method, hostname, auth, bodyFields, capturedBody)
   lines.push(`${method} ${path} HTTP/1.1`);
   lines.push(`Host: ${host}`);
   lines.push(`Accept: application/json, text/plain, */*`);
-  lines.push(`Accept-Language: vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7`);
+  lines.push(`Accept-Language: en-US,en;q=0.9`);
   lines.push(`Accept-Encoding: gzip, deflate, br`);
 
   if (['POST','PUT','PATCH'].includes(method)) lines.push(`Content-Type: application/json`);
@@ -417,6 +534,11 @@ function buildBurpRequest(url, method, hostname, auth, bodyFields, capturedBody)
     lines.push(`Content-Length: ${new TextEncoder().encode(body).length}`);
     lines.push('');
     lines.push(body);
+  } else {
+    // HTTP spec: headers must end with \r\n\r\n even for bodyless methods.
+    // join('\r\n') with two trailing empty strings produces "last-header\r\n\r\n".
+    lines.push('');
+    lines.push('');
   }
 
   return lines.join('\r\n');
