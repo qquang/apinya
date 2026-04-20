@@ -292,12 +292,12 @@ body {
 #presetSelect optgroup { color: #7a3060; background: #0e0709; }
 
 #aiDataNote {
-  flex-shrink: 0;
+  padding: 3px 12px;
   font-size: 9px;
   color: #7a3060;
   letter-spacing: 0.5px;
-  padding: 0 6px;
-  white-space: nowrap;
+  border-bottom: 1px solid #1e0a16;
+  min-height: 16px;
 }
 
 #aiRunBtn {

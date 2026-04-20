@@ -852,10 +852,10 @@ const AI_PRESETS = [
     build(data, target) {
       const all = data.secrets || [];
       if (!all.length) return `Target: ${target}\n\nNo leaked credentials found.`;
-      // Budget: 3500 tokens for data (response max_tokens=1024, prompt overhead ~500)
-      const { sec, secShown, secTotal } = budgetData({ all: [], secrets: all }, 3500);
-      const suffix = secShown < secTotal ? ` (showing ${secShown}/${secTotal} due to size)` : '';
-      return `Target: ${target}\nLeaked credentials${suffix}:\n${sec}\n\nFor each: rate CRITICAL/HIGH/MEDIUM/LOW/FALSE-POSITIVE and what attacker can do. Use the context to understand what each credential is for. Skip false positives. Be concise.`;
+      const lines = all.map((x, i) =>
+        `${i + 1}. [${x.type}] value: "${x.value}"\n   context: ${(x.context || '').slice(0, 200)}`
+      ).join('\n');
+      return `Target: ${target}\nLeaked credentials (${all.length}):\n${lines}\n\nFor each: rate CRITICAL/HIGH/MEDIUM/LOW/FALSE-POSITIVE and what attacker can do. Use the context to understand what each credential is for. Skip false positives. Be concise.`;
     },
   },
   {
@@ -940,7 +940,7 @@ const AI_PRESETS = [
       const { endpoints, secrets } = getActiveData(data, tab);
       const userTokens = roughTokens(userText);
       const { eps, sec, epShown, epTotal, secShown, secTotal } =
-        budgetData({ all: endpoints, secrets }, Math.max(1000, 4000 - userTokens));
+        budgetData({ all: endpoints, secrets }, Math.max(2000, 7000 - userTokens));
       const epNote  = epTotal  ? (epShown  < epTotal  ? ` (${epShown}/${epTotal})` : ` (${epTotal})`) : '';
       const secNote = secTotal ? (secShown < secTotal ? ` (${secShown}/${secTotal})` : ` (${secTotal})`) : '';
       const parts = [];
