@@ -69,8 +69,10 @@ const filterInput = $('filterInput');
 const copyAllBtn    = $('copyAllBtn');
 const exportJsonBtn = $('exportJsonBtn');
 const hostBtn       = $('hostBtn');
+const aiBtn         = $('aiBtn');
 const mainView    = $('mainView');
 const detailView  = $('detailView');
+const aiView      = $('aiView');
 const backBtn     = $('backBtn');
 const detailTitle = $('detailTitle');
 const analysingEl = $('analysing');
@@ -615,5 +617,222 @@ copyCurlBtn.addEventListener('click', () => {
     const orig = copyCurlBtn.textContent;
     copyCurlBtn.textContent = 'COPIED!';
     setTimeout(() => { copyCurlBtn.textContent = orig; copyCurlBtn.classList.remove('flash'); }, 1400);
+  });
+});
+
+// ── Settings panel ────────────────────────────────────────────
+
+const PROVIDERS = [
+  // Frontier
+  { id: 'gemini',      name: 'Gemini',              group: 'Frontier',    placeholder: 'AIza...',        defaultModel: 'gemini-2.0-flash',                              note: 'generativelanguage.googleapis.com' },
+  { id: 'claude',      name: 'Claude',              group: 'Frontier',    placeholder: 'sk-ant-api03-…', defaultModel: 'claude-haiku-4-5-20251001',                     note: 'api.anthropic.com' },
+  { id: 'openai',      name: 'OpenAI (GPT)',         group: 'Frontier',    placeholder: 'sk-…',           defaultModel: 'gpt-4o-mini',                                   note: 'api.openai.com' },
+  { id: 'grok',        name: 'xAI (Grok)',           group: 'Frontier',    placeholder: 'xai-…',          defaultModel: 'grok-3-mini',                                   note: 'api.x.ai' },
+  // Fast / free inference
+  { id: 'groq',        name: 'Groq',                group: 'Inference',   placeholder: 'gsk_…',          defaultModel: 'llama-3.1-8b-instant',                          note: 'api.groq.com' },
+  { id: 'cerebras',    name: 'Cerebras',            group: 'Inference',   placeholder: 'csk-…',          defaultModel: 'llama3.1-8b',                                   note: 'api.cerebras.ai' },
+  { id: 'sambanova',   name: 'SambaNova',           group: 'Inference',   placeholder: 'key…',           defaultModel: 'Meta-Llama-3.2-3B-Instruct',                    note: 'api.sambanova.ai' },
+  { id: 'siliconflow', name: 'SiliconFlow',         group: 'Inference',   placeholder: 'sk-…',           defaultModel: 'Qwen/Qwen2.5-7B-Instruct',                      note: 'api.siliconflow.cn' },
+  { id: 'together',    name: 'Together AI',         group: 'Inference',   placeholder: 'key…',           defaultModel: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',   note: 'api.together.xyz' },
+  { id: 'fireworks',   name: 'Fireworks AI',        group: 'Inference',   placeholder: 'fw_…',           defaultModel: 'accounts/fireworks/models/llama-v3p1-8b-instruct', note: 'api.fireworks.ai' },
+  { id: 'deepinfra',   name: 'DeepInfra',           group: 'Inference',   placeholder: 'key…',           defaultModel: 'meta-llama/Meta-Llama-3.1-8B-Instruct',         note: 'api.deepinfra.com' },
+  { id: 'novita',      name: 'Novita AI',           group: 'Inference',   placeholder: 'key…',           defaultModel: 'meta-llama/llama-3.1-8b-instruct',              note: 'api.novita.ai' },
+  { id: 'hyperbolic',  name: 'Hyperbolic',          group: 'Inference',   placeholder: 'key…',           defaultModel: 'meta-llama/Llama-3.2-3B-Instruct',              note: 'api.hyperbolic.xyz' },
+  { id: 'lepton',      name: 'Lepton AI',           group: 'Inference',   placeholder: 'key…',           defaultModel: 'llama3-1-8b',                                   note: 'api.lepton.ai' },
+  { id: 'nvidia',      name: 'NVIDIA NIM',          group: 'Inference',   placeholder: 'nvapi-…',        defaultModel: 'meta/llama-3.1-8b-instruct',                    note: 'integrate.api.nvidia.com' },
+  // LLM providers
+  { id: 'mistral',     name: 'Mistral AI',          group: 'LLM',         placeholder: 'key…',           defaultModel: 'mistral-small-latest',                          note: 'api.mistral.ai' },
+  { id: 'deepseek',    name: 'DeepSeek',            group: 'LLM',         placeholder: 'sk-…',           defaultModel: 'deepseek-chat',                                 note: 'api.deepseek.com' },
+  { id: 'perplexity',  name: 'Perplexity (Sonar)',  group: 'LLM',         placeholder: 'pplx-…',         defaultModel: 'sonar',                                         note: 'api.perplexity.ai' },
+  { id: 'cohere',      name: 'Cohere',              group: 'LLM',         placeholder: 'key…',           defaultModel: 'command-r',                                     note: 'api.cohere.com' },
+  { id: 'ai21',        name: 'AI21 Labs',           group: 'LLM',         placeholder: 'key…',           defaultModel: 'jamba-mini-1.6',                                note: 'api.ai21.com' },
+  { id: 'reka',        name: 'Reka AI',             group: 'LLM',         placeholder: 'key…',           defaultModel: 'reka-flash-3',                                  note: 'api.reka.ai' },
+  { id: 'inflection',  name: 'Inflection AI',       group: 'LLM',         placeholder: 'key…',           defaultModel: 'inflection_3_pi',                               note: 'api.inflection.ai' },
+  // Chinese LLMs
+  { id: 'qwen',        name: 'Qwen (Alibaba)',       group: 'Chinese',     placeholder: 'sk-…',           defaultModel: 'qwen-turbo',                                    note: 'dashscope-intl.aliyuncs.com' },
+  { id: 'moonshot',    name: 'Moonshot (Kimi)',      group: 'Chinese',     placeholder: 'sk-…',           defaultModel: 'moonshot-v1-8k',                                note: 'api.moonshot.cn' },
+  { id: 'zhipu',       name: 'Zhipu (GLM)',          group: 'Chinese',     placeholder: 'key…',           defaultModel: 'glm-4-flash',                                   note: 'open.bigmodel.cn' },
+  { id: 'minimax',     name: 'MiniMax',             group: 'Chinese',     placeholder: 'key…',           defaultModel: 'MiniMax-Text-01',                               note: 'api.minimax.chat' },
+  { id: 'stepfun',     name: 'StepFun',             group: 'Chinese',     placeholder: 'key…',           defaultModel: 'step-1-mini',                                   note: 'api.stepfun.com' },
+  { id: 'hunyuan',     name: 'Tencent Hunyuan',     group: 'Chinese',     placeholder: 'key…',           defaultModel: 'hunyuan-lite',                                  note: 'api.hunyuan.cloud.tencent.com' },
+  { id: 'yi',          name: '01.AI (Yi)',           group: 'Chinese',     placeholder: 'key…',           defaultModel: 'yi-lightning',                                  note: 'api.lingyiwanwu.com' },
+  // Gateways (aggregators)
+  { id: 'openrouter',  name: 'OpenRouter',          group: 'Gateways',    placeholder: 'sk-or-v1-…',     defaultModel: 'meta-llama/llama-3.2-3b-instruct:free',          note: 'openrouter.ai' },
+  { id: 'aimlapi',     name: 'AIMLAPI',             group: 'Gateways',    placeholder: 'key…',           defaultModel: 'meta-llama/Llama-3.2-3B-Instruct-Turbo',        note: 'api.aimlapi.com' },
+  // Cloud / custom URL
+  { id: 'azure',       name: 'Azure OpenAI',        group: 'Cloud',       placeholder: 'key…',           defaultModel: 'gpt-4o-mini',  customUrl: true, urlPlaceholder: 'https://{resource}.openai.azure.com/openai/deployments/{deploy}/chat/completions?api-version=2024-12-01-preview', note: 'azure.com' },
+  { id: 'custom',      name: 'Custom (OAI-compat)', group: 'Cloud',       placeholder: 'key…',           defaultModel: '',             customUrl: true, urlPlaceholder: 'https://your-host/v1', note: 'custom endpoint' },
+];
+
+const PROVIDER_MAP = Object.fromEntries(PROVIDERS.map(p => [p.id, p]));
+
+// Build grouped <select> from PROVIDERS array
+(function buildProviderSelect() {
+  const sel = $('providerSelect');
+  const groups = {};
+  PROVIDERS.forEach(p => { (groups[p.group] = groups[p.group] || []).push(p); });
+  Object.entries(groups).forEach(([grp, list]) => {
+    const og = document.createElement('optgroup');
+    og.label = `── ${grp} ──`;
+    list.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.id; o.textContent = p.name;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  });
+})();
+
+const settingsBtn   = $('settingsBtn');
+const settingsPanel = $('settingsPanel');
+const keyInput      = $('keyInput');
+const keySaveBtn    = $('keySaveBtn');
+const keyDeleteBtn  = $('keyDeleteBtn');
+const keyStatus     = $('keyStatus');
+
+let currentProvider = 'gemini';
+
+function applySettings(settings) {
+  const pid = settings.provider || 'gemini';
+  currentProvider = pid;
+  const p = PROVIDER_MAP[pid] || PROVIDER_MAP.custom;
+
+  $('providerSelect').value = pid;
+  keyInput.placeholder = p.placeholder || 'key…';
+  $('keyNote').textContent = `stored in chrome.storage.local · sent only to ${p.note}`;
+
+  // Model input
+  $('modelInput').value = (settings.models || {})[pid] || p.defaultModel || '';
+
+  // URL row (Azure / custom)
+  if (p.customUrl) {
+    $('urlRow').classList.remove('hidden');
+    $('urlInput').value = (settings.urls || {})[pid] || '';
+    $('urlInput').placeholder = p.urlPlaceholder || '';
+  } else {
+    $('urlRow').classList.add('hidden');
+  }
+
+  // Key status
+  const isSet = (settings.keysSet || []).includes(pid);
+  keyStatus.textContent = isSet ? 'key set ✓' : 'no key set';
+  keyStatus.classList.toggle('key-set', isSet);
+  keyDeleteBtn.classList.toggle('hidden', !isSet);
+  aiBtn.classList.toggle('ai-ready', isSet);
+}
+
+function loadSettings(cb) {
+  chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (res) => {
+    if (res) applySettings(res);
+    if (cb) cb(res);
+  });
+}
+
+settingsBtn.addEventListener('click', () => {
+  const nowOpen = settingsPanel.classList.toggle('hidden');
+  settingsBtn.classList.toggle('active', !nowOpen);
+  if (!nowOpen) loadSettings();
+});
+
+$('providerSelect').addEventListener('change', (e) => {
+  const p = e.target.value;
+  chrome.runtime.sendMessage({ type: 'SET_PROVIDER', provider: p }, () => loadSettings());
+});
+
+keySaveBtn.addEventListener('click', () => {
+  const key = keyInput.value.trim();
+  if (!key) return;
+  chrome.runtime.sendMessage({ type: 'SAVE_KEY', provider: currentProvider, key }, () => {
+    keyInput.value = '';
+    loadSettings();
+    keySaveBtn.textContent = 'SAVED!';
+    setTimeout(() => { keySaveBtn.textContent = 'SAVE'; }, 1400);
+  });
+});
+
+keyDeleteBtn.addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'DELETE_KEY', provider: currentProvider }, () => loadSettings());
+});
+
+$('modelSaveBtn').addEventListener('click', () => {
+  const model = $('modelInput').value.trim();
+  chrome.runtime.sendMessage({ type: 'SAVE_MODEL', provider: currentProvider, model }, () => {
+    $('modelSaveBtn').textContent = '✓';
+    setTimeout(() => { $('modelSaveBtn').textContent = '↵'; }, 1200);
+  });
+});
+
+$('urlSaveBtn').addEventListener('click', () => {
+  const url = $('urlInput').value.trim();
+  chrome.runtime.sendMessage({ type: 'SAVE_URL', provider: currentProvider, url }, () => {
+    $('urlSaveBtn').textContent = '✓';
+    setTimeout(() => { $('urlSaveBtn').textContent = '↵'; }, 1200);
+  });
+});
+
+// Load on popup open
+loadSettings();
+
+// ── AI analysis view ──────────────────────────────────────────
+
+function renderMarkdown(text) {
+  let html = escHtml(text);
+  html = html.replace(/^## (.+)$/gm, '<div class="ai-h2">$1</div>');
+  html = html.replace(/^### (.+)$/gm, '<div class="ai-h2">$1</div>');
+  html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/^[-•*] (.+)$/gm, '<div class="ai-li">$1</div>');
+  html = html.replace(/^\d+\. (.+)$/gm, '<div class="ai-li">$1</div>');
+  html = html.replace(/\n{2,}/g, '<br>');
+  return html;
+}
+
+function showAiView(html) {
+  mainView.classList.add('hidden');
+  detailView.classList.add('hidden');
+  aiView.classList.remove('hidden');
+  $('aiResult').innerHTML = html;
+}
+
+$('aiBackBtn').addEventListener('click', () => {
+  aiView.classList.add('hidden');
+  mainView.classList.remove('hidden');
+});
+
+aiBtn.addEventListener('click', async () => {
+  const hasKey = await new Promise(r =>
+    chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, res => {
+      const p = res?.provider || 'gemini';
+      r(res && (res.keysSet || []).includes(p));
+    })
+  );
+  if (!hasKey) {
+    settingsPanel.classList.remove('hidden');
+    settingsBtn.classList.add('active');
+    refreshKeyStatus();
+    return;
+  }
+
+  if (!allData.all.length) return;
+
+  mainView.classList.add('hidden');
+  aiView.classList.remove('hidden');
+  $('aiLoading').classList.remove('hidden');
+  $('aiResult').innerHTML = '';
+  aiBtn.disabled = true;
+
+  const payload = {
+    target: currentRootDomain || currentTabHostname || 'unknown',
+    endpoints: allData.all.map(e => ({ method: e.method, url: e.url, status: e.status || null })),
+    secrets: allData.secrets || [],
+  };
+
+  chrome.runtime.sendMessage({ type: 'AI_ANALYZE', payload }, (res) => {
+    $('aiLoading').classList.add('hidden');
+    aiBtn.disabled = false;
+    if (res && res.ok) {
+      showAiView(renderMarkdown(res.result));
+    } else {
+      showAiView(`<span style="color:#ff5577">error: ${escHtml((res && res.error) || 'unknown error')}</span>`);
+    }
   });
 });

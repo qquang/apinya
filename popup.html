@@ -12,6 +12,29 @@
       <span id="title">apinya</span>
       <span id="subtitle">API endpoint recon</span>
     </div>
+    <button id="settingsBtn" title="Claude AI settings">⚙</button>
+  </div>
+
+  <!-- ── Settings panel ── -->
+  <div id="settingsPanel" class="hidden">
+    <select id="providerSelect"></select>
+    <div id="modelRow">
+      <span class="cfg-label">model</span>
+      <input id="modelInput" type="text" spellcheck="false" autocomplete="off">
+      <button id="modelSaveBtn">↵</button>
+    </div>
+    <div id="urlRow" class="hidden">
+      <span class="cfg-label">url</span>
+      <input id="urlInput" type="text" spellcheck="false" autocomplete="off">
+      <button id="urlSaveBtn">↵</button>
+    </div>
+    <div id="keyRow">
+      <input id="keyInput" type="password" placeholder="key..." autocomplete="off" spellcheck="false">
+      <button id="keySaveBtn">SAVE</button>
+      <button id="keyDeleteBtn" class="hidden">CLEAR</button>
+    </div>
+    <div id="keyStatus">no key set</div>
+    <div id="keyNote"></div>
   </div>
 
   <!-- ── Main list view ── -->
@@ -36,6 +59,7 @@
       <input id="filterInput" type="text" placeholder="filter...">
       <button id="copyAllBtn" title="Copy all to clipboard">COPY</button>
       <button id="exportJsonBtn" title="Export as JSON file">JSON</button>
+      <button id="aiBtn" title="AI analysis (requires Claude API key)">AI</button>
     </div>
 
     <div id="results" class="hidden">
@@ -48,6 +72,16 @@
       <ul id="secretsList"></ul>
       <div id="secretsEmpty" class="hidden">no secrets/credentials found in JS</div>
     </div>
+  </div>
+
+  <!-- ── AI analysis view ── -->
+  <div id="aiView" class="hidden">
+    <div id="aiHeader">
+      <button id="aiBackBtn">← BACK</button>
+      <span id="aiTitle">AI ANALYSIS</span>
+    </div>
+    <div id="aiLoading" class="hidden">asking claude...</div>
+    <div id="aiResult"></div>
   </div>
 
   <!-- ── Burp request detail view ── -->
