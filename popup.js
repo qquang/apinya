@@ -775,10 +775,125 @@ loadSettings();
 
 // ── AI analysis view ──────────────────────────────────────────
 
+// Helper: shorten URL to path (save tokens)
+function epToPath(url, rootDomain) {
+  try {
+    const u = new URL(url);
+    const sameHost = !rootDomain || u.hostname === rootDomain || u.hostname.endsWith('.' + rootDomain);
+    const qs = u.search.length > 1 ? u.search.slice(0, 30) : '';
+    return sameHost ? (u.pathname + qs) : (u.host + u.pathname).slice(0, 60);
+  } catch { return url.slice(0, 60); }
+}
+
+function fmtEp(e, rootDomain) {
+  return `${e.method} ${epToPath(e.url, rootDomain)}${e.status ? ` [${e.status}]` : ''}`;
+}
+
+function filterEps(endpoints, pattern, rootDomain, limit) {
+  return endpoints.filter(e => pattern.test(e.url)).slice(0, limit)
+    .map(e => fmtEp(e, rootDomain)).join('\n');
+}
+
+// Preset definitions — each builds an optimized, focused prompt
+const AI_PRESETS = [
+  {
+    id: 'leaks',
+    label: 'Leak severity — which are actually dangerous?',
+    build(data, target) {
+      const s = data.secrets || [];
+      if (!s.length) return `Target: ${target}\n\nNo leaked credentials found. Nothing to analyze.`;
+      const lines = s.map((x, i) =>
+        `${i + 1}. [${x.type}] ${x.value.slice(0, 40)}${x.value.length > 40 ? '…' : ''}\n   ctx: ${(x.context || '').slice(0, 100)}`
+      ).join('\n');
+      return `Target: ${target}\nLeaked credentials (${s.length}):\n${lines}\n\nFor each: rate CRITICAL/HIGH/MEDIUM/LOW/FALSE-POSITIVE and what attacker can do with it. Skip obvious false positives. Be concise.`;
+    },
+  },
+  {
+    id: 'priority',
+    label: 'Priority endpoints for bug bounty',
+    build(data, target) {
+      const API_PAT = /\/(api|v\d|graphql|rest|auth|login|user|account|admin|pay|upload|search|file|order|cart|webhook|export|report|token|oauth|profile|config)\b/i;
+      const all = data.all || [];
+      const ranked = [
+        ...all.filter(e => API_PAT.test(e.url)),
+        ...all.filter(e => !API_PAT.test(e.url)),
+      ].slice(0, 35).map(e => fmtEp(e, currentRootDomain)).join('\n');
+      return `Target: ${target}\nEndpoints (${(data.all||[]).length} total, showing ${Math.min(35,(data.all||[]).length)} prioritized):\n${ranked}\n\nTop 5 by bug bounty value. For each: exact path, vulnerability type (IDOR/auth bypass/SSRF/mass assignment/injection), specific test approach. Be concrete.`;
+    },
+  },
+  {
+    id: 'auth',
+    label: 'Auth & access control weaknesses',
+    build(data, target) {
+      const PAT = /\/(auth|login|logout|signin|signup|token|oauth|sso|session|password|forgot|reset|verify|2fa|mfa|register|account|me)\b/i;
+      const eps = filterEps(data.all || [], PAT, currentRootDomain, 30);
+      if (!eps) return `Target: ${target}\n\nNo auth endpoints detected.`;
+      return `Target: ${target}\nAuth endpoints:\n${eps}\n\nCheck: missing auth on sensitive actions, JWT weaknesses, OAuth misconfig, password reset flaws, session fixation, 2FA bypass. Reference exact paths.`;
+    },
+  },
+  {
+    id: 'sensitive',
+    label: 'Exposed sensitive / admin paths',
+    build(data, target) {
+      const PAT = /\/(admin|dashboard|manage|control|config|settings?|debug|swagger|api-docs|openapi|redoc|\.env|backup|dump|export|logs?|metrics|health|actuator|phpinfo|\.git|internal|private|secret|console|devtools?|trace)\b/i;
+      const eps = filterEps(data.all || [], PAT, currentRootDomain, 30);
+      if (!eps) return `Target: ${target}\n\nNo sensitive paths detected.`;
+      return `Target: ${target}\nSensitive paths:\n${eps}\n\nAre these properly protected? 200 on admin = critical. Check: unauthenticated access, info disclosure, debug exposure. Rate each by severity.`;
+    },
+  },
+  {
+    id: 'idor',
+    label: 'IDOR & horizontal privilege escalation',
+    build(data, target) {
+      const PAT = /\/(\d{1,10}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i;
+      const eps = filterEps(data.all || [], PAT, currentRootDomain, 30);
+      if (!eps) return `Target: ${target}\n\nNo resource-ID endpoints found.`;
+      return `Target: ${target}\nEndpoints with IDs:\n${eps}\n\nIDOR analysis: which allow accessing other users' data by changing the ID? Suggest specific payloads. Check: sequential IDs, UUID predictability, missing ownership checks.`;
+    },
+  },
+  {
+    id: 'cors',
+    label: 'CORS & header misconfigurations',
+    build(data, target) {
+      const withHeaders = (data.all || []).filter(e => e.resHeaders);
+      const lines = withHeaders.slice(0, 25).map(e => {
+        const h = e.resHeaders;
+        const cors = h['access-control-allow-origin'] || '';
+        const creds = h['access-control-allow-credentials'] || '';
+        const csp = h['content-security-policy'] ? 'CSP:yes' : 'CSP:no';
+        const xfo = h['x-frame-options'] || 'no-XFO';
+        return `${fmtEp(e, currentRootDomain)} | CORS:${cors||'none'} creds:${creds||'no'} ${csp} ${xfo}`;
+      }).join('\n');
+      if (!lines) return `Target: ${target}\n\nNo response headers captured yet. Run LIST first.`;
+      return `Target: ${target}\nEndpoints with headers:\n${lines}\n\nCheck: wildcard CORS with credentials (critical), missing CSP, clickjacking (no X-Frame-Options), HSTS missing. Rate misconfigs.`;
+    },
+  },
+  {
+    id: 'full',
+    label: 'Full recon summary',
+    build(data, target) {
+      const all = data.all || [];
+      const eps = all.slice(0, 40).map(e => fmtEp(e, currentRootDomain)).join('\n');
+      const sec = (data.secrets || []).slice(0, 8)
+        .map(s => `- [${s.type}] ${s.value.slice(0, 20)}`).join('\n') || 'none';
+      return `Target: ${target}\nEndpoints (${all.length} total, showing 40):\n${eps}\nLeaks:\n${sec}\n\nBug bounty summary: top 3 priority endpoints, quick wins, credential risk. Max 250 words. Be specific.`;
+    },
+  },
+];
+
+// Build preset <select> options
+(function buildPresetSelect() {
+  const sel = $('presetSelect');
+  AI_PRESETS.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.id; o.textContent = p.label;
+    sel.appendChild(o);
+  });
+})();
+
 function renderMarkdown(text) {
   let html = escHtml(text);
-  html = html.replace(/^## (.+)$/gm, '<div class="ai-h2">$1</div>');
-  html = html.replace(/^### (.+)$/gm, '<div class="ai-h2">$1</div>');
+  html = html.replace(/^#{1,3} (.+)$/gm, '<div class="ai-h2">$1</div>');
   html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/^[-•*] (.+)$/gm, '<div class="ai-li">$1</div>');
   html = html.replace(/^\d+\. (.+)$/gm, '<div class="ai-li">$1</div>');
@@ -786,17 +901,39 @@ function renderMarkdown(text) {
   return html;
 }
 
-function showAiView(html) {
+function showAiView() {
   mainView.classList.add('hidden');
   detailView.classList.add('hidden');
   aiView.classList.remove('hidden');
-  $('aiResult').innerHTML = html;
 }
 
 $('aiBackBtn').addEventListener('click', () => {
   aiView.classList.add('hidden');
   mainView.classList.remove('hidden');
 });
+
+function runAiPreset() {
+  const presetId = $('presetSelect').value;
+  const preset = AI_PRESETS.find(p => p.id === presetId) || AI_PRESETS[0];
+  const target = currentRootDomain || currentTabHostname || 'unknown';
+  const prompt = preset.build(allData, target);
+
+  $('aiLoading').classList.remove('hidden');
+  $('aiResult').innerHTML = '';
+  $('aiRunBtn').disabled = true;
+
+  chrome.runtime.sendMessage({ type: 'AI_ANALYZE', prompt }, (res) => {
+    $('aiLoading').classList.add('hidden');
+    $('aiRunBtn').disabled = false;
+    if (res && res.ok) {
+      $('aiResult').innerHTML = renderMarkdown(res.result);
+    } else {
+      $('aiResult').innerHTML = `<span style="color:#ff5577">error: ${escHtml((res && res.error) || 'unknown')}</span>`;
+    }
+  });
+}
+
+$('aiRunBtn').addEventListener('click', runAiPreset);
 
 aiBtn.addEventListener('click', async () => {
   const hasKey = await new Promise(r =>
@@ -808,31 +945,9 @@ aiBtn.addEventListener('click', async () => {
   if (!hasKey) {
     settingsPanel.classList.remove('hidden');
     settingsBtn.classList.add('active');
-    refreshKeyStatus();
+    loadSettings();
     return;
   }
-
   if (!allData.all.length) return;
-
-  mainView.classList.add('hidden');
-  aiView.classList.remove('hidden');
-  $('aiLoading').classList.remove('hidden');
-  $('aiResult').innerHTML = '';
-  aiBtn.disabled = true;
-
-  const payload = {
-    target: currentRootDomain || currentTabHostname || 'unknown',
-    endpoints: allData.all.map(e => ({ method: e.method, url: e.url, status: e.status || null })),
-    secrets: allData.secrets || [],
-  };
-
-  chrome.runtime.sendMessage({ type: 'AI_ANALYZE', payload }, (res) => {
-    $('aiLoading').classList.add('hidden');
-    aiBtn.disabled = false;
-    if (res && res.ok) {
-      showAiView(renderMarkdown(res.result));
-    } else {
-      showAiView(`<span style="color:#ff5577">error: ${escHtml((res && res.error) || 'unknown error')}</span>`);
-    }
-  });
+  showAiView();
 });

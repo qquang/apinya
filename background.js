@@ -163,11 +163,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const cfg = PROVIDER_API[provider] || PROVIDER_API.custom;
       const model = d[`model_${provider}`] || cfg.defaultModel || '';
       const baseUrl = d[`url_${provider}`] || cfg.baseUrl || '';
+      const prompt = msg.prompt;
+      if (!prompt) { sendResponse({ error: 'empty prompt' }); return; }
       try {
         let result;
-        if (cfg.apiType === 'gemini')      result = await callGemini(key, model, msg.payload);
-        else if (cfg.apiType === 'anthropic') result = await callClaude(key, model, msg.payload);
-        else                                result = await callOpenAI(baseUrl, key, model, msg.payload);
+        if (cfg.apiType === 'gemini')         result = await callGemini(key, model, prompt);
+        else if (cfg.apiType === 'anthropic') result = await callClaude(key, model, prompt);
+        else                                  result = await callOpenAI(baseUrl, key, model, prompt);
         sendResponse({ ok: true, result });
       } catch (e) {
         sendResponse({ error: e.message });
@@ -178,31 +180,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
-function buildPrompt({ target, endpoints, secrets }) {
-  const epLines = endpoints.slice(0, 60)
-    .map(e => `${e.method} ${e.url}${e.status ? ` [${e.status}]` : ''}`)
-    .join('\n');
-  const secLines = secrets.length
-    ? secrets.map(s => `- ${s.type}: ${s.value.slice(0, 12)}...`).join('\n')
-    : 'none';
-  return `Bug bounty recon analysis for: ${target}
-
-Endpoints (${endpoints.length} total${endpoints.length > 60 ? ', showing 60' : ''}):
-${epLines}
-
-Leaked credentials (${secrets.length}):
-${secLines}
-
-Provide a concise bug bounty analysis:
-1. **Top priority endpoints** — which 3-5 are highest-value and what vulnerability to test (IDOR, auth bypass, SSRF, mass assignment, etc.)
-2. **Quick wins** — obvious issues: admin paths, unauthenticated 2xx endpoints, dangerous methods (DELETE/PUT), sensitive data exposure
-3. **Credential risk** — for any leaked secrets, what an attacker can do with them
-4. **Next steps** — 2-3 specific actionable commands or tests
-
-Be specific, reference exact paths, max 350 words.`;
-}
-
-async function callGemini(key, model, payload) {
+async function callGemini(key, model, prompt) {
   const m = model || 'gemini-2.0-flash';
   const resp = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(key)}`,
@@ -210,7 +188,7 @@ async function callGemini(key, model, payload) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: buildPrompt(payload) }] }],
+        contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { maxOutputTokens: 1024 },
       }),
     }
@@ -223,7 +201,7 @@ async function callGemini(key, model, payload) {
   return data.candidates[0].content.parts[0].text;
 }
 
-async function callClaude(key, model, payload) {
+async function callClaude(key, model, prompt) {
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -235,7 +213,7 @@ async function callClaude(key, model, payload) {
     body: JSON.stringify({
       model: model || 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
-      messages: [{ role: 'user', content: buildPrompt(payload) }],
+      messages: [{ role: 'user', content: prompt }],
     }),
   });
   if (!resp.ok) {
@@ -246,7 +224,7 @@ async function callClaude(key, model, payload) {
   return data.content[0].text;
 }
 
-async function callOpenAI(baseUrl, key, model, payload) {
+async function callOpenAI(baseUrl, key, model, prompt) {
   if (!baseUrl) throw new Error('no endpoint URL configured');
   const url = baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
   const resp = await fetch(url, {
@@ -254,12 +232,12 @@ async function callOpenAI(baseUrl, key, model, payload) {
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${key}`,
-      'api-key': key, // Azure compatibility
+      'api-key': key,
     },
     body: JSON.stringify({
       model,
       max_tokens: 1024,
-      messages: [{ role: 'user', content: buildPrompt(payload) }],
+      messages: [{ role: 'user', content: prompt }],
     }),
   });
   if (!resp.ok) {

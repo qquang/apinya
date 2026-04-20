@@ -269,6 +269,45 @@ body {
   letter-spacing: 2px;
 }
 
+#aiControls {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid #3d1030;
+  background: #0c0608;
+}
+
+#presetSelect {
+  flex: 1;
+  background: #0c0608;
+  border: none;
+  border-right: 1px solid #3d1030;
+  color: #d0a0c0;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  padding: 6px 8px;
+  outline: none;
+  cursor: pointer;
+}
+#presetSelect option { background: #1a0a14; color: #fce4f0; }
+#presetSelect optgroup { color: #7a3060; background: #0e0709; }
+
+#aiRunBtn {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  background: #1a0a1a;
+  border: none;
+  border-left: 1px solid #3d1030;
+  color: #c084fc;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+#aiRunBtn:hover { background: #2a0a2a; color: #e0a0ff; }
+#aiRunBtn:disabled { opacity: 0.3; cursor: not-allowed; }
+
 #aiLoading {
   padding: 12px;
   font-size: 10px;
