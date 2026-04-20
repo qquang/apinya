@@ -291,6 +291,15 @@ body {
 #presetSelect option { background: #1a0a14; color: #fce4f0; }
 #presetSelect optgroup { color: #7a3060; background: #0e0709; }
 
+#aiDataNote {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: #7a3060;
+  letter-spacing: 0.5px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
 #aiRunBtn {
   flex-shrink: 0;
   padding: 6px 14px;

@@ -812,6 +812,19 @@ function budgetData(data, tokenBudget) {
   };
 }
 
+// Tab-aware data selectors
+// Endpoint-focused presets: use current tab's list; fallback to ALL when on LEAK tab
+function activeEndpoints(data, tab) {
+  return tab === 'secrets' ? (data.all || []) : (data[tab] || data.all || []);
+}
+// Mixed presets (full/custom): strictly respect tab — LEAK tab = only secrets, no endpoints
+function getActiveData(data, tab) {
+  return {
+    endpoints: tab === 'secrets' ? [] : (data[tab] || data.all || []),
+    secrets:   (tab === 'secrets' || tab === 'all') ? (data.secrets || []) : [],
+  };
+}
+
 // Helper: shorten URL to path (save tokens)
 function epToPath(url, rootDomain) {
   try {
@@ -848,52 +861,52 @@ const AI_PRESETS = [
   {
     id: 'priority',
     label: 'Priority endpoints for bug bounty',
-    build(data, target) {
+    build(data, target, tab) {
       const API_PAT = /\/(api|v\d|graphql|rest|auth|login|user|account|admin|pay|upload|search|file|order|cart|webhook|export|report|token|oauth|profile|config)\b/i;
-      const all = data.all || [];
+      const pool = activeEndpoints(data, tab);
       const ranked = [
-        ...all.filter(e => API_PAT.test(e.url)),
-        ...all.filter(e => !API_PAT.test(e.url)),
+        ...pool.filter(e => API_PAT.test(e.url)),
+        ...pool.filter(e => !API_PAT.test(e.url)),
       ].slice(0, 35).map(e => fmtEp(e, currentRootDomain)).join('\n');
-      return `Target: ${target}\nEndpoints (${(data.all||[]).length} total, showing ${Math.min(35,(data.all||[]).length)} prioritized):\n${ranked}\n\nTop 5 by bug bounty value. For each: exact path, vulnerability type (IDOR/auth bypass/SSRF/mass assignment/injection), specific test approach. Be concrete.`;
+      return `Target: ${target}\nEndpoints (${pool.length} in ${tabLabel(tab)}, showing ${Math.min(35, pool.length)} prioritized):\n${ranked}\n\nTop 5 by bug bounty value. For each: exact path, vulnerability type (IDOR/auth bypass/SSRF/mass assignment/injection), specific test approach. Be concrete.`;
     },
   },
   {
     id: 'auth',
     label: 'Auth & access control weaknesses',
-    build(data, target) {
+    build(data, target, tab) {
       const PAT = /\/(auth|login|logout|signin|signup|token|oauth|sso|session|password|forgot|reset|verify|2fa|mfa|register|account|me)\b/i;
-      const eps = filterEps(data.all || [], PAT, currentRootDomain, 30);
-      if (!eps) return `Target: ${target}\n\nNo auth endpoints detected.`;
-      return `Target: ${target}\nAuth endpoints:\n${eps}\n\nCheck: missing auth on sensitive actions, JWT weaknesses, OAuth misconfig, password reset flaws, session fixation, 2FA bypass. Reference exact paths.`;
+      const eps = filterEps(activeEndpoints(data, tab), PAT, currentRootDomain, 30);
+      if (!eps) return `Target: ${target}\n\nNo auth endpoints in ${tabLabel(tab)}.`;
+      return `Target: ${target}\nAuth endpoints (${tabLabel(tab)}):\n${eps}\n\nCheck: missing auth on sensitive actions, JWT weaknesses, OAuth misconfig, password reset flaws, session fixation, 2FA bypass. Reference exact paths.`;
     },
   },
   {
     id: 'sensitive',
     label: 'Exposed sensitive / admin paths',
-    build(data, target) {
+    build(data, target, tab) {
       const PAT = /\/(admin|dashboard|manage|control|config|settings?|debug|swagger|api-docs|openapi|redoc|\.env|backup|dump|export|logs?|metrics|health|actuator|phpinfo|\.git|internal|private|secret|console|devtools?|trace)\b/i;
-      const eps = filterEps(data.all || [], PAT, currentRootDomain, 30);
-      if (!eps) return `Target: ${target}\n\nNo sensitive paths detected.`;
-      return `Target: ${target}\nSensitive paths:\n${eps}\n\nAre these properly protected? 200 on admin = critical. Check: unauthenticated access, info disclosure, debug exposure. Rate each by severity.`;
+      const eps = filterEps(activeEndpoints(data, tab), PAT, currentRootDomain, 30);
+      if (!eps) return `Target: ${target}\n\nNo sensitive paths in ${tabLabel(tab)}.`;
+      return `Target: ${target}\nSensitive paths (${tabLabel(tab)}):\n${eps}\n\nAre these properly protected? 200 on admin = critical. Check: unauthenticated access, info disclosure, debug exposure. Rate each by severity.`;
     },
   },
   {
     id: 'idor',
     label: 'IDOR & horizontal privilege escalation',
-    build(data, target) {
+    build(data, target, tab) {
       const PAT = /\/(\d{1,10}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i;
-      const eps = filterEps(data.all || [], PAT, currentRootDomain, 30);
-      if (!eps) return `Target: ${target}\n\nNo resource-ID endpoints found.`;
-      return `Target: ${target}\nEndpoints with IDs:\n${eps}\n\nIDOR analysis: which allow accessing other users' data by changing the ID? Suggest specific payloads. Check: sequential IDs, UUID predictability, missing ownership checks.`;
+      const eps = filterEps(activeEndpoints(data, tab), PAT, currentRootDomain, 30);
+      if (!eps) return `Target: ${target}\n\nNo resource-ID endpoints in ${tabLabel(tab)}.`;
+      return `Target: ${target}\nEndpoints with IDs (${tabLabel(tab)}):\n${eps}\n\nIDOR analysis: which allow accessing other users' data by changing the ID? Suggest specific payloads. Check: sequential IDs, UUID predictability, missing ownership checks.`;
     },
   },
   {
     id: 'cors',
     label: 'CORS & header misconfigurations',
-    build(data, target) {
-      const withHeaders = (data.all || []).filter(e => e.resHeaders);
-      const lines = withHeaders.slice(0, 25).map(e => {
+    build(data, target, tab) {
+      const pool = activeEndpoints(data, tab).filter(e => e.resHeaders);
+      const lines = pool.slice(0, 25).map(e => {
         const h = e.resHeaders;
         const cors = h['access-control-allow-origin'] || '';
         const creds = h['access-control-allow-credentials'] || '';
@@ -901,34 +914,39 @@ const AI_PRESETS = [
         const xfo = h['x-frame-options'] || 'no-XFO';
         return `${fmtEp(e, currentRootDomain)} | CORS:${cors||'none'} creds:${creds||'no'} ${csp} ${xfo}`;
       }).join('\n');
-      if (!lines) return `Target: ${target}\n\nNo response headers captured yet. Run LIST first.`;
-      return `Target: ${target}\nEndpoints with headers:\n${lines}\n\nCheck: wildcard CORS with credentials (critical), missing CSP, clickjacking (no X-Frame-Options), HSTS missing. Rate misconfigs.`;
+      if (!lines) return `Target: ${target}\n\nNo response headers in ${tabLabel(tab)}. Run LIST first.`;
+      return `Target: ${target}\nEndpoints with headers (${tabLabel(tab)}):\n${lines}\n\nCheck: wildcard CORS with credentials (critical), missing CSP, clickjacking (no X-Frame-Options), HSTS missing. Rate misconfigs.`;
     },
   },
   {
     id: 'full',
     label: 'Full recon summary',
-    build(data, target) {
-      const all = data.all || [];
-      const eps = all.slice(0, 40).map(e => fmtEp(e, currentRootDomain)).join('\n');
-      const sec = (data.secrets || []).slice(0, 8)
-        .map(s => `- [${s.type}] ${s.value.slice(0, 20)}`).join('\n') || 'none';
-      return `Target: ${target}\nEndpoints (${all.length} total, showing 40):\n${eps}\nLeaks:\n${sec}\n\nBug bounty summary: top 3 priority endpoints, quick wins, credential risk. Max 250 words. Be specific.`;
+    build(data, target, tab) {
+      const { endpoints, secrets } = getActiveData(data, tab);
+      const eps = endpoints.slice(0, 40).map(e => fmtEp(e, currentRootDomain)).join('\n');
+      const sec = secrets.slice(0, 8).map(s => `- [${s.type}] ${s.value.slice(0, 20)}`).join('\n') || 'none';
+      const parts = [];
+      if (endpoints.length) parts.push(`${endpoints.length} endpoints`);
+      if (secrets.length)   parts.push(`${secrets.length} leaks`);
+      return `Target: ${target} — ${tabLabel(tab)} (${parts.join(', ')})\nEndpoints:\n${eps || 'none'}\nLeaks:\n${sec}\n\nBug bounty summary: top 3 priority endpoints, quick wins, credential risk. Max 250 words. Be specific.`;
     },
   },
   {
     id: 'custom',
     label: '✏  Custom prompt',
-    build(data, target) {
+    build(data, target, tab) {
       const userText = ($('customPromptInput').value || '').trim();
       if (!userText) return null;
-      // Reserve ~600 tokens for user prompt + headers; 3400 for data
+      const { endpoints, secrets } = getActiveData(data, tab);
       const userTokens = roughTokens(userText);
       const { eps, sec, epShown, epTotal, secShown, secTotal } =
-        budgetData(data, Math.max(1000, 4000 - userTokens));
-      const epNote  = epShown  < epTotal  ? ` (${epShown}/${epTotal})` : ` (${epTotal})`;
-      const secNote = secShown < secTotal ? ` (${secShown}/${secTotal})` : ` (${secTotal})`;
-      return `${userText}\n\n---\nScan data — ${target}:\nEndpoints${epNote}:\n${eps}\n\nLeaked credentials${secNote}:\n${sec}`;
+        budgetData({ all: endpoints, secrets }, Math.max(1000, 4000 - userTokens));
+      const epNote  = epTotal  ? (epShown  < epTotal  ? ` (${epShown}/${epTotal})` : ` (${epTotal})`) : '';
+      const secNote = secTotal ? (secShown < secTotal ? ` (${secShown}/${secTotal})` : ` (${secTotal})`) : '';
+      const parts = [];
+      if (epTotal)  parts.push(`endpoints${epNote}`);
+      if (secTotal) parts.push(`leaks${secNote}`);
+      return `${userText}\n\n---\nScan data — ${target} [${tabLabel(tab)}${parts.length ? ': ' + parts.join(', ') : ''}]:\n${epTotal ? `Endpoints:\n${eps}\n` : ''}${secTotal ? `Leaked credentials:\n${sec}` : ''}`;
     },
   },
 ];
@@ -945,7 +963,29 @@ const AI_PRESETS = [
 
 $('presetSelect').addEventListener('change', (e) => {
   $('customPromptInput').classList.toggle('hidden', e.target.value !== 'custom');
+  updateDataNote();
 });
+
+const TAB_LABELS = { all: 'ALL', network: 'NET', dynamic: 'DYN', static: 'SRC', secrets: 'LEAK' };
+function tabLabel(tab) { return TAB_LABELS[tab] || tab.toUpperCase(); }
+
+function updateDataNote() {
+  const tab = currentTab;
+  const presetId = $('presetSelect').value;
+  let eps = 0, sec = 0;
+  if (presetId === 'leaks') {
+    sec = (allData.secrets || []).length;
+  } else if (presetId === 'full' || presetId === 'custom') {
+    const d = getActiveData(allData, tab);
+    eps = d.endpoints.length; sec = d.secrets.length;
+  } else {
+    eps = activeEndpoints(allData, tab).length;
+  }
+  const parts = [];
+  if (eps) parts.push(`${eps} ep`);
+  if (sec) parts.push(`${sec} leaks`);
+  $('aiDataNote').textContent = `${tabLabel(tab)}${parts.length ? ' · ' + parts.join(' · ') : ''}`;
+}
 
 function renderMarkdown(text) {
   let html = escHtml(text);
@@ -961,6 +1001,7 @@ function showAiView() {
   mainView.classList.add('hidden');
   detailView.classList.add('hidden');
   aiView.classList.remove('hidden');
+  updateDataNote();
 }
 
 $('aiBackBtn').addEventListener('click', () => {
@@ -972,7 +1013,7 @@ function runAiPreset() {
   const presetId = $('presetSelect').value;
   const preset = AI_PRESETS.find(p => p.id === presetId) || AI_PRESETS[0];
   const target = currentRootDomain || currentTabHostname || 'unknown';
-  const prompt = preset.build(allData, target);
+  const prompt = preset.build(allData, target, currentTab);
   if (!prompt) {
     $('aiResult').innerHTML = '<span style="color:#ff5577">type your prompt first</span>';
     return;
