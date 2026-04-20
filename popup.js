@@ -322,6 +322,11 @@ listBtn.addEventListener('click', async () => {
     const secretsInfo = contentRes.secrets?.length ? ` · ${contentRes.secrets.length} leak(s)` : '';
     const mapInfo = contentRes.sourceMapFiles?.length ? ` · ${contentRes.sourceMapFiles.length} src map files` : '';
     setStatus(`found ${allItems.length} total${domainInfo}${secretsInfo}${mapInfo}`);
+
+    chrome.runtime.sendMessage({
+      type: 'CACHE_SCAN', tabId: tab.id,
+      data: { allData, rootDomain: currentRootDomain, tabHostname: currentTabHostname },
+    });
   } catch (err) {
     setStatus(`error: ${err.message}`, true);
   } finally {
@@ -344,7 +349,10 @@ clearBtn.addEventListener('click', () => {
   statusEl.textContent = '';
 
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    if (tab) chrome.runtime.sendMessage({ type: 'CLEAR', tabId: tab.id });
+    if (tab) {
+      chrome.runtime.sendMessage({ type: 'CLEAR', tabId: tab.id });
+      chrome.runtime.sendMessage({ type: 'CACHE_SCAN', tabId: tab.id, data: null });
+    }
   });
 });
 
@@ -770,8 +778,31 @@ $('urlSaveBtn').addEventListener('click', () => {
   });
 });
 
-// Load on popup open
+// Load on popup open — restore cached scan if available
 loadSettings();
+
+chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+  if (!tab) return;
+  chrome.runtime.sendMessage({ type: 'GET_SCAN_CACHE', tabId: tab.id }, (res) => {
+    if (!res || !res.data) return;
+    const c = res.data;
+    allData = c.allData;
+    currentRootDomain  = c.rootDomain  || '';
+    currentTabHostname = c.tabHostname || '';
+    if (hostOnly && currentRootDomain) {
+      hostBtn.textContent = `HOST: ${currentRootDomain}`;
+      hostBtn.title = `Show only ${currentRootDomain} & subdomains`;
+    }
+    updateCounts();
+    tabsEl.classList.remove('hidden');
+    toolbarEl.classList.remove('hidden');
+    showTab('all');
+    const shown = applyHostFilter(allData.all).length;
+    const domainInfo = (hostOnly && currentRootDomain) ? ` — ${shown} from ${currentRootDomain}` : '';
+    const secretsInfo = allData.secrets?.length ? ` · ${allData.secrets.length} leak(s)` : '';
+    setStatus(`found ${allData.all.length} total${domainInfo}${secretsInfo} (cached)`);
+  });
+});
 
 // ── AI analysis view ──────────────────────────────────────────
 
@@ -852,83 +883,166 @@ const AI_PRESETS = [
     build(data, target) {
       const all = data.secrets || [];
       if (!all.length) return `Target: ${target}\n\nNo leaked credentials found.`;
-      const lines = all.map((x, i) =>
-        `${i + 1}. [${x.type}] value: "${x.value}"\n   context: ${(x.context || '').slice(0, 200)}`
-      ).join('\n');
-      return `Target: ${target}\nLeaked credentials (${all.length}):\n${lines}\n\nFor each: rate CRITICAL/HIGH/MEDIUM/LOW/FALSE-POSITIVE and what attacker can do. Use the context to understand what each credential is for. Skip false positives. Be concise.`;
+      const tail = `\n\nFor each: rate CRITICAL/HIGH/MEDIUM/LOW/FALSE-POSITIVE and what attacker can do. Use the context to understand what each credential is for. Skip false positives. Be concise.`;
+      const budget = 5200 - roughTokens(`Target: ${target}\nLeaked credentials (${all.length}):`) - roughTokens(tail);
+      const lines = [];
+      let used = 0;
+      for (let i = 0; i < all.length; i++) {
+        const x = all[i];
+        const line = `${i + 1}. [${x.type}] value: "${x.value}"\n   context: ${(x.context || '').slice(0, 200)}`;
+        const t = roughTokens(line);
+        if (used + t > budget) break;
+        lines.push(line); used += t;
+      }
+      const note = lines.length < all.length ? ` (${lines.length}/${all.length})` : '';
+      return `Target: ${target}\nLeaked credentials (${all.length}${note}):\n${lines.join('\n')}${tail}`;
     },
   },
   {
     id: 'priority',
-    label: 'Priority endpoints for bug bounty',
+    label: 'Top targets — ranked by impact',
     build(data, target, tab) {
-      const API_PAT = /\/(api|v\d|graphql|rest|auth|login|user|account|admin|pay|upload|search|file|order|cart|webhook|export|report|token|oauth|profile|config)\b/i;
+      const API_PAT = /\/(api|v\d|graphql|rest|auth|login|user|account|admin|pay|upload|search|file|order|cart|webhook|export|report|token|oauth|profile|config|internal|manage|dashboard|transfer|withdraw|invite|impersonate)\b/i;
       const pool = activeEndpoints(data, tab);
       const ranked = [
         ...pool.filter(e => API_PAT.test(e.url)),
         ...pool.filter(e => !API_PAT.test(e.url)),
-      ].slice(0, 35).map(e => fmtEp(e, currentRootDomain)).join('\n');
-      return `Target: ${target}\nEndpoints (${pool.length} in ${tabLabel(tab)}, showing ${Math.min(35, pool.length)} prioritized):\n${ranked}\n\nTop 5 by bug bounty value. For each: exact path, vulnerability type (IDOR/auth bypass/SSRF/mass assignment/injection), specific test approach. Be concrete.`;
+      ].slice(0, 40).map(e => fmtEp(e, currentRootDomain)).join('\n');
+      return `Target: ${target} [${tabLabel(tab)}, ${pool.length} endpoints]
+${ranked}
+
+You are a bug bounty hunter. Identify the 8 highest-value targets.
+For each write exactly:
+[SEVERITY] METHOD /path → vuln type → one-line test step
+Severity: Critical/High/Medium. Focus: IDOR, unauth access, mass assignment, SSRF, injection. Skip static assets.`;
     },
   },
   {
     id: 'auth',
-    label: 'Auth & access control weaknesses',
+    label: 'Auth & access control flaws',
     build(data, target, tab) {
-      const PAT = /\/(auth|login|logout|signin|signup|token|oauth|sso|session|password|forgot|reset|verify|2fa|mfa|register|account|me)\b/i;
-      const eps = filterEps(activeEndpoints(data, tab), PAT, currentRootDomain, 30);
-      if (!eps) return `Target: ${target}\n\nNo auth endpoints in ${tabLabel(tab)}.`;
-      return `Target: ${target}\nAuth endpoints (${tabLabel(tab)}):\n${eps}\n\nCheck: missing auth on sensitive actions, JWT weaknesses, OAuth misconfig, password reset flaws, session fixation, 2FA bypass. Reference exact paths.`;
+      const PAT = /\/(auth|login|logout|signin|signup|token|oauth|sso|session|password|forgot|reset|verify|2fa|mfa|register|account|me|user|profile|admin|manage|dashboard|permission|role|grant|revoke)\b/i;
+      const pool = activeEndpoints(data, tab);
+      const matched = filterEps(pool, PAT, currentRootDomain, 35);
+      const allEps  = matched || pool.slice(0, 20).map(e => fmtEp(e, currentRootDomain)).join('\n');
+      return `Target: ${target} — auth surface [${tabLabel(tab)}]:
+${allEps}
+
+For each endpoint, check:
+1. Unauthenticated access — remove Authorization/Cookie header entirely
+2. JWT — try alg:none, expired token, role field manipulation (user→admin)
+3. OAuth — redirect_uri whitelist bypass, missing state param, token in URL
+4. Password reset — host header injection, predictable token, response body manipulation
+5. Privilege escalation — call admin endpoint as regular user
+6. 2FA — code reuse, race condition bypass, backup code brute force
+Output: endpoint → specific attack → severity (Critical/High/Med).`;
     },
   },
   {
     id: 'sensitive',
     label: 'Exposed sensitive / admin paths',
     build(data, target, tab) {
-      const PAT = /\/(admin|dashboard|manage|control|config|settings?|debug|swagger|api-docs|openapi|redoc|\.env|backup|dump|export|logs?|metrics|health|actuator|phpinfo|\.git|internal|private|secret|console|devtools?|trace)\b/i;
-      const eps = filterEps(activeEndpoints(data, tab), PAT, currentRootDomain, 30);
-      if (!eps) return `Target: ${target}\n\nNo sensitive paths in ${tabLabel(tab)}.`;
-      return `Target: ${target}\nSensitive paths (${tabLabel(tab)}):\n${eps}\n\nAre these properly protected? 200 on admin = critical. Check: unauthenticated access, info disclosure, debug exposure. Rate each by severity.`;
+      const PAT = /\/(admin|dashboard|manage|control|config|settings?|debug|swagger|api-docs|openapi|redoc|\.env|backup|dump|export|logs?|metrics|health|actuator|phpinfo|\.git|internal|private|secret|console|devtools?|trace|monitor|status|panel|portal)\b/i;
+      const eps = filterEps(activeEndpoints(data, tab), PAT, currentRootDomain, 35);
+      if (!eps) return `Target: ${target}\n\nNo sensitive/admin paths found in ${tabLabel(tab)}.`;
+      return `Target: ${target} — sensitive paths [${tabLabel(tab)}]:
+${eps}
+
+Triage each path:
+- [CRITICAL] Admin/console accessible without auth (200 status)
+- [HIGH] API docs (swagger/openapi) exposed — list dangerous endpoints documented
+- [HIGH] Debug/trace endpoints — stack traces, env vars, internal IPs leaked
+- [MEDIUM] Health/metrics — internal service info exposed
+- [LOW] Exists but properly auth-gated
+For top 3 critical/high findings: what exactly can an attacker do?`;
     },
   },
   {
     id: 'idor',
-    label: 'IDOR & horizontal privilege escalation',
+    label: 'IDOR & parameter tampering',
     build(data, target, tab) {
-      const PAT = /\/(\d{1,10}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i;
-      const eps = filterEps(activeEndpoints(data, tab), PAT, currentRootDomain, 30);
-      if (!eps) return `Target: ${target}\n\nNo resource-ID endpoints in ${tabLabel(tab)}.`;
-      return `Target: ${target}\nEndpoints with IDs (${tabLabel(tab)}):\n${eps}\n\nIDOR analysis: which allow accessing other users' data by changing the ID? Suggest specific payloads. Check: sequential IDs, UUID predictability, missing ownership checks.`;
+      const PAT = /\/(\d{1,12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z0-9_-]{6,})\b(?=\/|$|\?)/i;
+      const pool = activeEndpoints(data, tab);
+      const matched = filterEps(pool, PAT, currentRootDomain, 35);
+      const allEps  = matched || pool.slice(0, 20).map(e => fmtEp(e, currentRootDomain)).join('\n');
+      return `Target: ${target} — object references [${tabLabel(tab)}]:
+${allEps}
+
+IDOR and privilege escalation analysis:
+1. Sequential numeric IDs → increment/decrement, access another user's resource
+2. UUIDs → are they truly random or derived from email/timestamp?
+3. Horizontal: /users/123/orders → change 123 to another user's ID
+4. Vertical: /user/profile → try /admin/profile or add ?role=admin
+5. Mass assignment: POST/PUT bodies — add "role":"admin", "is_admin":true, "balance":9999
+6. Hidden param injection: append ?user_id=X to any endpoint
+For top 5: exact path, payload, what data/action is exposed.`;
     },
   },
   {
     id: 'cors',
-    label: 'CORS & header misconfigurations',
+    label: 'CORS & security headers',
     build(data, target, tab) {
       const pool = activeEndpoints(data, tab).filter(e => e.resHeaders);
+      if (!pool.length) {
+        const allEps = activeEndpoints(data, tab).slice(0, 25).map(e => fmtEp(e, currentRootDomain)).join('\n');
+        return `Target: ${target} — no headers captured yet [${tabLabel(tab)}]
+${allEps}
+
+No response headers captured (reload page after clicking LIST to capture them).
+Based on endpoint patterns, predict likely misconfigs:
+- /api/* endpoints: CORS misconfiguration likely?
+- Login/auth: CSRF protection present?
+- File upload: content-type validation?
+- Admin panels: X-Frame-Options missing (clickjacking)?
+Which 3 endpoints to prioritize for manual header inspection?`;
+      }
       const lines = pool.slice(0, 25).map(e => {
         const h = e.resHeaders;
-        const cors = h['access-control-allow-origin'] || '';
-        const creds = h['access-control-allow-credentials'] || '';
-        const csp = h['content-security-policy'] ? 'CSP:yes' : 'CSP:no';
-        const xfo = h['x-frame-options'] || 'no-XFO';
-        return `${fmtEp(e, currentRootDomain)} | CORS:${cors||'none'} creds:${creds||'no'} ${csp} ${xfo}`;
+        const cors  = h['access-control-allow-origin'] || '-';
+        const creds = h['access-control-allow-credentials'] || '-';
+        const csp   = h['content-security-policy'] ? 'CSP:✓' : 'CSP:✗';
+        const hsts  = h['strict-transport-security'] ? 'HSTS:✓' : 'HSTS:✗';
+        const xfo   = h['x-frame-options'] ? `XFO:${h['x-frame-options']}` : 'XFO:✗';
+        const cookie = h['set-cookie'] ? 'Cookie:set' : '';
+        return `${fmtEp(e, currentRootDomain)} | CORS:${cors} creds:${creds} ${csp} ${hsts} ${xfo} ${cookie}`.trim();
       }).join('\n');
-      if (!lines) return `Target: ${target}\n\nNo response headers in ${tabLabel(tab)}. Run LIST first.`;
-      return `Target: ${target}\nEndpoints with headers (${tabLabel(tab)}):\n${lines}\n\nCheck: wildcard CORS with credentials (critical), missing CSP, clickjacking (no X-Frame-Options), HSTS missing. Rate misconfigs.`;
+      return `Target: ${target} — security headers [${tabLabel(tab)}]:
+${lines}
+
+Find exploitable misconfigs (severity order):
+1. [CRITICAL] CORS * + credentials:true — any endpoint?
+2. [HIGH] CORS allows specific origin that can be spoofed or is a subdomain?
+3. [HIGH] CSP missing on pages that render user input → XSS amplified
+4. [MEDIUM] X-Frame-Options missing on login/account pages → clickjacking
+5. [MEDIUM] HSTS missing → SSL stripping on sensitive paths
+6. [INFO] Cookies without Secure/HttpOnly/SameSite flags
+Write PoC for the worst finding.`;
     },
   },
   {
     id: 'full',
-    label: 'Full recon summary',
+    label: 'Attack surface overview',
     build(data, target, tab) {
       const { endpoints, secrets } = getActiveData(data, tab);
       const eps = endpoints.slice(0, 40).map(e => fmtEp(e, currentRootDomain)).join('\n');
-      const sec = secrets.slice(0, 8).map(s => `- [${s.type}] ${s.value.slice(0, 20)}`).join('\n') || 'none';
+      const sec = secrets.slice(0, 10).map(s => `- [${s.type}] ${s.value.slice(0, 30)}`).join('\n') || 'none';
       const parts = [];
       if (endpoints.length) parts.push(`${endpoints.length} endpoints`);
       if (secrets.length)   parts.push(`${secrets.length} leaks`);
-      return `Target: ${target} — ${tabLabel(tab)} (${parts.join(', ')})\nEndpoints:\n${eps || 'none'}\nLeaks:\n${sec}\n\nBug bounty summary: top 3 priority endpoints, quick wins, credential risk. Max 250 words. Be specific.`;
+      return `Target: ${target} [${tabLabel(tab)}: ${parts.join(', ')}]
+
+Endpoints:
+${eps || 'none'}
+
+Leaked credentials:
+${sec}
+
+Structured attack surface report:
+## Quick Wins (exploitable now, <30 min each)
+## High-Value Targets (need more testing)
+## Credential Risk (leaked keys/tokens — what can attacker do with each?)
+## Attack Chains (combine findings for higher impact)
+Be specific: path + technique + impact. Skip noise.`;
     },
   },
   {

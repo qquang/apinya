@@ -1,5 +1,6 @@
-const tabData = {};
-const _pending = {}; // requestId -> { tabId, url }
+const tabData   = {};
+const _pending  = {}; // requestId -> { tabId, url }
+const scanCache = {}; // tabId -> last full scan result
 
 const SKIP_EXTENSIONS = /\.(png|jpe?g|gif|ico|css|woff2?|ttf|eot|svg|mp4|webm|mp3|wav|pdf|map|txt)(\?.*)?$/i;
 const SKIP_HOSTS = /google-analytics|googletagmanager|doubleclick|facebook\.net|hotjar|mixpanel|segment\.com|clarity\.ms|bat\.bing/i;
@@ -69,11 +70,15 @@ chrome.webRequest.onHeadersReceived.addListener(
 );
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === 'loading') tabData[tabId] = [];
+  if (changeInfo.status === 'loading') {
+    tabData[tabId] = [];
+    delete scanCache[tabId];
+  }
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   delete tabData[tabId];
+  delete scanCache[tabId];
 });
 
 // Lean API config used only by background to make calls
@@ -153,6 +158,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       sendResponse({ provider: d.aiProvider || 'gemini', keysSet, models, urls });
     });
+    return true;
+  }
+  if (msg.type === 'CACHE_SCAN') {
+    scanCache[msg.tabId] = msg.data;
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (msg.type === 'GET_SCAN_CACHE') {
+    sendResponse({ data: scanCache[msg.tabId] || null });
     return true;
   }
   if (msg.type === 'AI_ANALYZE') {
