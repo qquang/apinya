@@ -136,11 +136,11 @@ function render(items) {
     </li>
   `).join('');
 
-  listEl.querySelectorAll('li').forEach(li => {
-    li.addEventListener('click', () => {
-      try { openDetailView(JSON.parse(li.dataset.item)); } catch (_) {}
-    });
-  });
+  listEl.onclick = (e) => {
+    const li = e.target.closest('li');
+    if (!li) return;
+    try { openDetailView(JSON.parse(li.dataset.item)); } catch (_) {}
+  };
 }
 
 function escHtml(str) {
@@ -209,27 +209,26 @@ function renderSecrets() {
     </li>`;
   }).join('');
 
-  secretsList.querySelectorAll('.secret-item').forEach(li => {
-    // Toggle expanded context on preview row click
-    li.querySelector('.secret-ctx-preview').addEventListener('click', () => {
-      li.classList.toggle('secret-expanded');
-      const t = li.querySelector('.secret-toggle');
-      if (t) t.textContent = li.classList.contains('secret-expanded') ? '▲ collapse' : '▼ context';
-    });
-
-    // COPY button — stopPropagation so it doesn't trigger the toggle
-    li.querySelector('.copy-secret-btn').addEventListener('click', (e) => {
+  secretsList.onclick = (e) => {
+    const li = e.target.closest('.secret-item');
+    if (!li) return;
+    if (e.target.classList.contains('copy-secret-btn')) {
       e.stopPropagation();
       const idx = parseInt(li.dataset.idx);
       const secret = allData.secrets[idx];
       if (!secret) return;
-      const btn = e.currentTarget;
       navigator.clipboard.writeText(secret.value).then(() => {
-        btn.textContent = 'OK!';
-        setTimeout(() => { btn.textContent = 'COPY'; }, 1200);
+        e.target.textContent = 'OK!';
+        setTimeout(() => { e.target.textContent = 'COPY'; }, 1200);
       });
-    });
-  });
+      return;
+    }
+    if (e.target.closest('.secret-ctx-preview')) {
+      li.classList.toggle('secret-expanded');
+      const t = li.querySelector('.secret-toggle');
+      if (t) t.textContent = li.classList.contains('secret-expanded') ? '▲ collapse' : '▼ context';
+    }
+  };
 }
 
 function dedupeUrls(items) {
@@ -356,8 +355,10 @@ clearBtn.addEventListener('click', () => {
   });
 });
 
+let _filterTimer;
 filterInput.addEventListener('input', () => {
-  render(allData[currentTab] || []);
+  clearTimeout(_filterTimer);
+  _filterTimer = setTimeout(() => render(allData[currentTab] || []), 150);
 });
 
 copyAllBtn.addEventListener('click', () => {

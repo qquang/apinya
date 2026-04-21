@@ -125,15 +125,17 @@ function buildConstantMap(code) {
   while ((m = DIRECT.exec(code)) !== null) {
     if (!SKIP_EXTS.test(m[2])) consts.set(m[1], m[2]);
   }
+  const TMPL   = /\b([A-Za-z_$][A-Za-z0-9_$]{0,40})\s*=\s*(?:[a-zA-Z_$]\w*\s*=>\s*)?`([^`\n]{3,})`/g;
+  const CONCAT = /\b([A-Za-z_$][A-Za-z0-9_$]{0,40})\s*=\s*([A-Za-z_$][A-Za-z0-9_$]{0,40})\s*\+\s*["'`]([^"'`\n]+)["'`]/g;
   for (let pass = 0; pass < 4; pass++) {
     let progress = false;
-    const TMPL = /\b([A-Za-z_$][A-Za-z0-9_$]{0,40})\s*=\s*(?:[a-zA-Z_$]\w*\s*=>\s*)?`([^`\n]{3,})`/g;
+    TMPL.lastIndex = 0;
     while ((m = TMPL.exec(code)) !== null) {
       if (consts.has(m[1])) continue;
       let r = m[2];
       let changed = false;
       for (const [cn, cv] of consts) {
-        if (r.includes(`\${${cn}}`)) { r = r.split(`\${${cn}}`).join(cv); changed = true; }
+        if (r.includes(`\${${cn}}`)) { r = r.replaceAll(`\${${cn}}`, cv); changed = true; }
       }
       if (!changed) continue;
       const wp = r.replace(/\$\{[^}]+\}/g, '{*}');
@@ -143,7 +145,7 @@ function buildConstantMap(code) {
         }
       }
     }
-    const CONCAT = /\b([A-Za-z_$][A-Za-z0-9_$]{0,40})\s*=\s*([A-Za-z_$][A-Za-z0-9_$]{0,40})\s*\+\s*["'`]([^"'`\n]+)["'`]/g;
+    CONCAT.lastIndex = 0;
     while ((m = CONCAT.exec(code)) !== null) {
       if (consts.has(m[1]) || !consts.has(m[2])) continue;
       const r = consts.get(m[2]) + m[3];
@@ -162,7 +164,7 @@ function endpointsFromConstants(code, consts) {
   while ((m = ALL_TMPL.exec(code)) !== null) {
     let r = m[1]; let changed = false;
     for (const [cn, cv] of consts) {
-      if (r.includes(`\${${cn}}`)) { r = r.split(`\${${cn}}`).join(cv); changed = true; }
+      if (r.includes(`\${${cn}}`)) { r = r.replaceAll(`\${${cn}}`, cv); changed = true; }
     }
     if (!changed) continue;
     const wp = r.replace(/\$\{[^}]+\}/g, '{*}').trim();
@@ -181,7 +183,7 @@ function endpointsFromConstants(code, consts) {
 function extractDirectPatterns(code) {
   const found = new Map();
   const add = (u, meth) => { if (looksLikeEndpoint(u) && !found.has(u)) found.set(u, meth); };
-  const run = (re, meth) => { const r = new RegExp(re.source, re.flags); let m; while ((m = r.exec(code)) !== null) add(m[1].trim(), meth); };
+  const run = (re, meth) => { re.lastIndex = 0; let m; while ((m = re.exec(code)) !== null) add(m[1].trim(), meth); };
 
   const METHOD_CTX = /\.\s*(get|post|put|delete|patch|head|options|request)\s*\(\s*["']((?:https?:\/\/[^"'#\s]{6,}|\/[a-zA-Z0-9_][^"'#\s]{2,}))["']/g;
   let mc; const r2 = new RegExp(METHOD_CTX.source, METHOD_CTX.flags);
@@ -315,9 +317,9 @@ function detectSecrets(codes) {
   const seen = new Set();
   for (const code of codes) {
     for (const { name, re } of _SECRET_PATTERNS) {
-      const r = new RegExp(re.source, re.flags);
+      re.lastIndex = 0;
       let m;
-      while ((m = r.exec(code)) !== null) {
+      while ((m = re.exec(code)) !== null) {
         const value = (m[1] || m[0]).slice(0, 120);
         if (_PLACEHOLDER.test(value)) continue;
         const key = `${name}:${value}`;
@@ -496,36 +498,41 @@ async function runStaticScan() {
   const sourceMapFiles = [];
 
   for (const el of scriptEls) {
-    if (el.textContent) contents.push(el.textContent);
+    if (el.textContent && el.textContent.length < 500000) contents.push(el.textContent);
   }
 
   const externalUrls = scriptEls.filter(s => s.src).map(s => s.src);
   const fetched = await Promise.allSettled(
     externalUrls.map(u => fetch(u, { cache: 'force-cache' }).then(r => r.text()))
   );
+
+  // Fetch all source maps in parallel instead of one-by-one
+  const mapFetches = fetched.map((r, i) =>
+    r.status === 'fulfilled' && r.value
+      ? tryFetchSourceMap(externalUrls[i], r.value).catch(() => null)
+      : Promise.resolve(null)
+  );
+  const mapResults = await Promise.allSettled(mapFetches);
+
   for (let i = 0; i < fetched.length; i++) {
     const r = fetched[i];
     if (r.status !== 'fulfilled' || !r.value) continue;
     contents.push(r.value);
-    // Try to fetch and parse source map — exposes original unminified source
-    try {
-      const mapData = await tryFetchSourceMap(externalUrls[i], r.value);
-      if (mapData) {
-        if (mapData.sources) {
-          for (const s of mapData.sources) {
-            if (s && !s.includes('node_modules') && !s.startsWith('webpack:///external')) {
-              sourceMapFiles.push(s.replace(/^webpack:\/\/\//, ''));
-            }
-          }
-        }
-        // Original source code is gold — scan it for endpoints
-        if (mapData.sourcesContent) {
-          for (const src of mapData.sourcesContent) {
-            if (src && src.length < 500000) contents.push(src);
+    const mapData = mapResults[i].status === 'fulfilled' ? mapResults[i].value : null;
+    if (mapData) {
+      if (mapData.sources) {
+        for (const s of mapData.sources) {
+          if (s && !s.includes('node_modules') && !s.startsWith('webpack:///external')) {
+            sourceMapFiles.push(s.replace(/^webpack:\/\/\//, ''));
           }
         }
       }
-    } catch (_) {}
+      if (mapData.sourcesContent) {
+        for (const src of mapData.sourcesContent) {
+          if (src && src.length < 500000) contents.push(src);
+        }
+      }
+    }
   }
 
   // Store globally for later CRAFT_REQUEST queries
