@@ -4,13 +4,17 @@
   "version": "1.0.0",
   "description": "API endpoint recon tool — crawl & collect all endpoints from any page",
   "icons": {
-    "16": "images.jpeg",
-    "48": "images.jpeg",
-    "128": "images.jpeg"
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   },
   "action": {
     "default_popup": "popup.html",
-    "default_icon": "images.jpeg",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
     "default_title": "apinya"
   },
   "permissions": [
