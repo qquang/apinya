@@ -299,28 +299,48 @@ listBtn.addEventListener('click', async () => {
     const mergedDynamic = dedupeUrls(dynamicItems);
     const mergedStatic  = dedupeUrls(staticItems);
 
+    // Accumulate: merge new scan results with previously collected data
+    const prevCount = allData.all.length;
+
+    const mergedAllNetwork = dedupeUrls([...allData.network, ...mergedNetwork]);
+    const mergedAllDynamic = dedupeUrls([...allData.dynamic, ...mergedDynamic]);
+    const mergedAllStatic  = dedupeUrls([...allData.static,  ...mergedStatic]);
     // All combined, prioritize network > dynamic > static
-    const allItems = dedupeUrls([...mergedNetwork, ...mergedDynamic, ...mergedStatic]);
+    const mergedAllItems   = dedupeUrls([...mergedAllNetwork, ...mergedAllDynamic, ...mergedAllStatic]);
+
+    // Dedupe secrets by type:value
+    const prevSecrets = allData.secrets || [];
+    const seenSecrets = new Set(prevSecrets.map(s => s.type + ':' + s.value));
+    const mergedSecrets = [...prevSecrets];
+    for (const s of (contentRes.secrets || [])) {
+      const k = s.type + ':' + s.value;
+      if (!seenSecrets.has(k)) { seenSecrets.add(k); mergedSecrets.push(s); }
+    }
+
+    const mergedSourceMapFiles = [...new Set([...(allData.sourceMapFiles || []), ...(contentRes.sourceMapFiles || [])])];
 
     allData = {
-      all:            allItems,
-      network:        mergedNetwork,
-      dynamic:        mergedDynamic,
-      static:         mergedStatic,
-      secrets:        contentRes.secrets || [],
-      sourceMapFiles: contentRes.sourceMapFiles || [],
+      all:            mergedAllItems,
+      network:        mergedAllNetwork,
+      dynamic:        mergedAllDynamic,
+      static:         mergedAllStatic,
+      secrets:        mergedSecrets,
+      sourceMapFiles: mergedSourceMapFiles,
     };
+
+    const newCount = mergedAllItems.length - prevCount;
 
     updateCounts();
     tabsEl.classList.remove('hidden');
     toolbarEl.classList.remove('hidden');
     showTab('all');
 
-    const shown = applyHostFilter(allItems).length;
+    const shown = applyHostFilter(mergedAllItems).length;
     const domainInfo = (hostOnly && currentRootDomain) ? ` — ${shown} from ${currentRootDomain}` : '';
-    const secretsInfo = contentRes.secrets?.length ? ` · ${contentRes.secrets.length} leak(s)` : '';
-    const mapInfo = contentRes.sourceMapFiles?.length ? ` · ${contentRes.sourceMapFiles.length} src map files` : '';
-    setStatus(`found ${allItems.length} total${domainInfo}${secretsInfo}${mapInfo}`);
+    const newInfo = newCount > 0 ? ` (+${newCount} new)` : '';
+    const secretsInfo = mergedSecrets.length ? ` · ${mergedSecrets.length} leak(s)` : '';
+    const mapInfo = mergedSourceMapFiles.length ? ` · ${mergedSourceMapFiles.length} src map files` : '';
+    setStatus(`found ${mergedAllItems.length} total${newInfo}${domainInfo}${secretsInfo}${mapInfo}`);
 
     chrome.runtime.sendMessage({
       type: 'CACHE_SCAN', tabId: tab.id,
@@ -362,7 +382,7 @@ filterInput.addEventListener('input', () => {
 });
 
 copyAllBtn.addEventListener('click', () => {
-  const items = allData[currentTab] || [];
+  const items = applyHostFilter(allData[currentTab] || []);
   const filter = filterInput.value.trim().toLowerCase();
   const filtered = filter ? items.filter(i => i.url.toLowerCase().includes(filter)) : items;
   if (!filtered.length) return;
