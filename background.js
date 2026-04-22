@@ -1,6 +1,15 @@
-const tabData   = {};
-const _pending  = {}; // requestId -> { tabId, url }
-const scanCache = {}; // tabId -> last full scan result
+const tabData    = {};
+const tabDomains = {}; // tabId -> root domain currently tracked
+const _pending   = {}; // requestId -> { tabId, url }
+const scanCache  = {}; // tabId -> last full scan result
+
+const TWO_PART_SLDS = new Set(['com.vn','net.vn','org.vn','edu.vn','gov.vn','co.uk','com.au','com.sg','co.jp','co.kr','com.br']);
+function getRootDomain(hostname) {
+  const parts = hostname.split('.');
+  if (parts.length <= 2) return hostname;
+  if (TWO_PART_SLDS.has(parts.slice(-2).join('.'))) return parts.slice(-3).join('.');
+  return parts.slice(-2).join('.');
+}
 
 const SKIP_EXTENSIONS = /\.(png|jpe?g|gif|ico|css|woff2?|ttf|eot|svg|mp4|webm|mp3|wav|pdf|map|txt)(\?.*)?$/i;
 const SKIP_HOSTS = /google-analytics|googletagmanager|doubleclick|facebook\.net|hotjar|mixpanel|segment\.com|clarity\.ms|bat\.bing/i;
@@ -70,20 +79,21 @@ chrome.webRequest.onHeadersReceived.addListener(
 );
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === 'loading') {
-    tabData[tabId] = [];
-    // Clear cache only when navigating to a different domain;
-    // preserve it for same-domain navigations so APIs accumulate across pages
-    if (changeInfo.url) {
-      try {
-        const newHost = new URL(changeInfo.url).hostname;
-        const cached = scanCache[tabId];
-        if (!cached?.rootDomain || !newHost.endsWith(cached.rootDomain)) {
-          delete scanCache[tabId];
-        }
-      } catch {
+  if (changeInfo.status === 'loading' && changeInfo.url) {
+    try {
+      const newRoot = getRootDomain(new URL(changeInfo.url).hostname);
+      const prevRoot = tabDomains[tabId];
+      if (prevRoot && prevRoot !== newRoot) {
+        // Different domain — reset everything so old site's data doesn't bleed in
+        tabData[tabId] = [];
         delete scanCache[tabId];
       }
+      // Same domain (or first visit) — keep tabData accumulating passively
+      tabDomains[tabId] = newRoot;
+    } catch {
+      tabData[tabId] = [];
+      delete scanCache[tabId];
+      delete tabDomains[tabId];
     }
   }
 });
@@ -91,6 +101,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   delete tabData[tabId];
   delete scanCache[tabId];
+  delete tabDomains[tabId];
 });
 
 // Lean API config used only by background to make calls
@@ -137,6 +148,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'CLEAR') {
     tabData[msg.tabId] = [];
+    delete tabDomains[msg.tabId];
     sendResponse({ ok: true });
     return true;
   }
