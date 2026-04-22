@@ -375,6 +375,13 @@ clearBtn.addEventListener('click', () => {
   });
 });
 
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+    e.preventDefault();
+    if (!listBtn.disabled) listBtn.click();
+  }
+});
+
 let _filterTimer;
 filterInput.addEventListener('input', () => {
   clearTimeout(_filterTimer);
