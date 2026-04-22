@@ -72,7 +72,8 @@ chrome.webRequest.onHeadersReceived.addListener(
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading') {
     tabData[tabId] = [];
-    delete scanCache[tabId];
+    // scanCache is intentionally preserved across navigations so popup can
+    // accumulate results from multiple pages; cleared only by explicit CLEAR
   }
 });
 
