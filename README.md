@@ -8,7 +8,7 @@
 
 ## Features
 
-- **One-click scan** — press LIST to collect all endpoints instantly
+- **Browse-then-scan** — background layer silently accumulates network requests as you navigate; press LIST when ready to get everything at once
 - **3-layer discovery** — network intercept + dynamic patch + static JS analysis
 - **Constant folding** — resolves minified variable chains like `const Jn="/portal-attend/attend"`, `` const Qn=`${Jn}/reason/arrive-late` ``
 - **Burp Suite request crafter** — click any endpoint to generate a ready-to-paste HTTP request
@@ -58,8 +58,9 @@
 `chrome.webRequest` captures **every** HTTP request made by the tab, at the browser level. This works even when JavaScript is heavily obfuscated or encrypted — the code still has to make real network calls.
 
 - Runs persistently as a service worker
-- Resets on each page load (`tabs.onUpdated`)
-- Stores per-tab: `{ url, method, type }`
+- **Accumulates across all pages** on the same domain — navigating to a new page does NOT reset the data
+- Resets only when you switch to a different root domain or click CLEAR
+- Stores per-tab: `{ url, method, type, status, resHeaders }`
 
 ### Layer 2 — Dynamic Runtime Patch (`content.js`)
 
@@ -159,14 +160,46 @@ curl -s -X POST 'https://api.example.com/api/v1/users/profile' \
 
 ## Usage
 
-### Basic recon
+### Recommended flow
 
-1. Browse to the target page and **wait for it to fully load**
-2. Click the apinya icon → press **LIST**
-3. Endpoints appear grouped by source:
-   - `NET` — captured by network interceptor (most reliable)
-   - `DYN` — captured at JS runtime (includes actual bodies)
-   - `SRC` — found via static JS analysis
+apinya is designed to be used **before** you click LIST, not after. The background layer silently accumulates every network request as you browse — so the more you explore, the better the results.
+
+```
+1. Open the target site
+        ↓
+2. Browse around — navigate pages, log in, click features, trigger API calls
+   (apinya is recording everything in the background automatically)
+        ↓
+3. When you've covered enough ground, open apinya → press LIST
+        ↓
+4. Get all endpoints from every page you visited in one shot
+```
+
+**Example:**
+
+| Step | Action | NET count |
+|------|--------|-----------|
+| Open `example.com` | Homepage loads | 30 |
+| Navigate to `/products` | Product page loads | +25 |
+| Navigate to `/account` | Account page loads | +18 |
+| Press **LIST** | Scan current page + pull all 73 network entries | **73+** |
+
+Switching to a different root domain (e.g. `other.com`) automatically resets the accumulator. Click **CLEAR** to reset manually at any time.
+
+---
+
+### Reading the results
+
+Endpoints appear grouped by source tab:
+
+| Tab | Source | Notes |
+|-----|--------|-------|
+| `NET` | `chrome.webRequest` | Most reliable — browser-level capture, can't be hidden |
+| `DYN` | Runtime fetch/XHR patch | Includes actual request bodies if the call was made |
+| `SRC` | Static JS analysis | Endpoints found in code but not yet called |
+| `ALL` | Combined + deduped | Default view |
+
+The status bar shows `found N total (+X new)` so you always know how many new endpoints each scan added.
 
 ### Filter by domain
 
@@ -182,11 +215,16 @@ The **HOST** toggle (on by default) shows only endpoints from the current root d
    — or —
    Press **COPY CURL** → paste into terminal
 
+### Keyboard shortcut
+
+`Ctrl+0` (Windows/Linux) or `Cmd+0` (Mac) — triggers LIST while the popup is open.
+
 ### Tips for better coverage
 
-- **Let the page load completely** before clicking LIST — JavaScript bundles need time to execute and register routes
-- **Interact with the app first** — log in, navigate, trigger API calls — the DYN layer captures real request bodies from those calls
-- For SPAs: navigate through different sections before scanning, so more code paths are evaluated
+- **Browse first, scan later** — the more pages you visit before pressing LIST, the more NET endpoints you get
+- **Trigger real actions** — log in, submit forms, open modals — the DYN layer captures actual request bodies from those calls
+- **Use HOST filter** — keeps the list focused on the target domain, reduces noise from CDNs and analytics
+- **Multiple LIST clicks are additive** — each scan merges into the existing results, never overwrites
 
 ---
 
@@ -204,7 +242,8 @@ apinya/
 ├── popup.html        — Extension popup UI
 ├── popup.css         — Anya-themed dark UI styles
 ├── popup.js          — Popup logic: scanning, filtering, Burp crafter
-└── images.jpeg       — Extension icon (Anya)
+├── icons/            — Extension icons (PNG 16/48/128px)
+└── images.jpeg       — Original icon source
 ```
 
 ---
