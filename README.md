@@ -131,28 +131,28 @@ Click any endpoint in the list to open the request builder.
 
 **COPY BURP** — raw HTTP/1.1 format, paste directly into Burp Suite Repeater:
 ```
-POST /portal-attend/attend/reason/arrive-late HTTP/1.1
-Host: iportal.mbs.com.vn
+POST /api/v1/users/profile HTTP/1.1
+Host: api.example.com
 Accept: application/json, text/plain, */*
 Content-Type: application/json
 Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...
 Cookie: session=abc123; XSRF-TOKEN=xyz
 Connection: close
-Content-Length: 38
+Content-Length: 34
 
 {
-  "reason": "",
-  "employeeId": ""
+  "username": "",
+  "email": ""
 }
 ```
 
 **COPY CURL** — ready-to-run curl command:
 ```bash
-curl -s -X POST 'https://iportal.mbs.com.vn/portal-attend/attend/reason/arrive-late' \
+curl -s -X POST 'https://api.example.com/api/v1/users/profile' \
   -H 'Authorization: Bearer eyJ...' \
   -H 'Cookie: session=abc123' \
   -H 'Content-Type: application/json' \
-  -d '{"reason":"","employeeId":""}'
+  -d '{"username":"","email":""}'
 ```
 
 ---
