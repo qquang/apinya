@@ -72,8 +72,19 @@ chrome.webRequest.onHeadersReceived.addListener(
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading') {
     tabData[tabId] = [];
-    // scanCache is intentionally preserved across navigations so popup can
-    // accumulate results from multiple pages; cleared only by explicit CLEAR
+    // Clear cache only when navigating to a different domain;
+    // preserve it for same-domain navigations so APIs accumulate across pages
+    if (changeInfo.url) {
+      try {
+        const newHost = new URL(changeInfo.url).hostname;
+        const cached = scanCache[tabId];
+        if (!cached?.rootDomain || !newHost.endsWith(cached.rootDomain)) {
+          delete scanCache[tabId];
+        }
+      } catch {
+        delete scanCache[tabId];
+      }
+    }
   }
 });
 
